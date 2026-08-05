@@ -55,6 +55,23 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
                         proportion=0.0,
                         apply_roughness=True,
                         ),
+        # IsaacLab HfInvertedPyramidStairsTerrainCfg 를 parkour 규약에 맞춘 지형.
+        # proportion=0.0 이라 teacher/student '학습' 분포는 그대로 두고,
+        # PLAY/EVAL 설정에서만 비중을 켜서 쓴다. 학습에도 넣고 싶으면 여기를 올리면 된다.
+        #
+        # 4.0m 폭 타일에서 step_width=0.3 이면 y 는 4칸 만에 apex_width(1.6m) 에 닿는다.
+        # step_depth 를 (pyramid_len - apex_width) / (2*4) = (8.0-1.6)/8 = 0.8 로 맞추면
+        # x 도 같은 4칸에서 닫혀 바닥이 1.6m 정사각형인 피라미드가 된다.
+        "parkour_pyramid_stairs": ExtremeParkourInvertedPyramidStairsTerrainCfg(
+                        proportion=0.0,
+                        apply_roughness=True,
+                        step_height_range=(0.05, 0.20),
+                        step_width=0.3,
+                        step_depth=0.8,
+                        apex_width=1.6,
+                        pyramid_len=8.0,
+                        run_up_len=1.5,
+                        ),
 
     },
 )

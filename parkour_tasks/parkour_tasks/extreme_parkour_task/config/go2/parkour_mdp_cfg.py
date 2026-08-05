@@ -261,7 +261,9 @@ class EventCfg:
     """Configuration for events."""
     reset_root_state = EventTerm(
         func= events.reset_root_state,
-        params = {'offset': 3.},
+        # offset = 타일 시작점에서 spawn 까지의 x 거리. 시작 플랫폼은 0 ~ platform_len(2.5m)
+        # 이므로 그 안에 들어와야 한다. 1.0 은 원본(16m 지형)의 실제 spawn 위치와 동일하다.
+        params = {'offset': 1.},
         mode="reset",
     )
     reset_robot_joints = EventTerm(

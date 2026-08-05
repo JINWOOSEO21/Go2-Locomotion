@@ -14,7 +14,10 @@ class ParkourTeacherSceneCfg(ParkourDefaultSceneCfg):
     height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base",
         offset=RayCasterCfg.OffsetCfg(pos=(0.375, 0.0, 20.0)),
-        attach_yaw_only=True,
+        # attach_yaw_only=True 와 동일한 동작이지만 이쪽이 후속 API 다.
+        # 구 파라미터를 쓰면 IsaacLab 이 _update_ray_infos() 안에서, 즉 센서가 갱신되는
+        # 매 스텝마다 deprecation 경고를 찍는다(초당 50줄). 동작에는 영향이 없고 로그만 더럽힌다.
+        ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.15, size=[1.65, 1.5]),
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],

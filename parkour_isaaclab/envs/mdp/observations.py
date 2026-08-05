@@ -18,8 +18,9 @@ from isaaclab.assets import Articulation
 from isaaclab.utils.math  import euler_xyz_from_quat, wrap_to_pi
 from parkour_isaaclab.envs.mdp.parkours import ParkourEvent 
 from collections.abc import Sequence
-import numpy as np 
+import numpy as np
 import cv2
+import warnings
 if TYPE_CHECKING:
     from parkour_isaaclab.envs import ParkourManagerBasedRLEnv
     from isaaclab.managers import ObservationTermCfg
@@ -147,6 +148,8 @@ class image_features(ManagerTermBase):
         resized = cfg.params["resize"]
         self.buffer_len = cfg.params['buffer_len']
         self.debug_vis = cfg.params['debug_vis']
+        # cv2.imshow 가 가능한 환경인지. 첫 실패 시 False 로 내려간다.
+        self._can_show = True
         self.resize_transform = torchvision.transforms.Resize(
                                     (resized[0], resized[1]), 
                                     interpolation=torchvision.transforms.InterpolationMode.BICUBIC).to(env.device)
@@ -177,7 +180,7 @@ class image_features(ManagerTermBase):
                 processed_image = self._process_depth_image(depth_image)
                 self.depth_buffer[env_id] = torch.cat([self.depth_buffer[env_id, 1:], 
                                                     processed_image.to(self.device).unsqueeze(0)], dim=0)
-        if self.debug_vis:
+        if self.debug_vis and self._can_show:
             depth_images_np = self.depth_buffer[:, -2].detach().cpu().numpy()
             depth_images_norm = []
             for img in depth_images_np:
@@ -185,12 +188,23 @@ class image_features(ManagerTermBase):
             rows = []
             ncols = 4
             for i in range(0, len(depth_images_norm), ncols):
-                row = np.hstack(depth_images_norm[i:i+ncols])  
-                rows.append(row)
+                chunk = list(depth_images_norm[i:i+ncols])
+                # 마지막 행이 ncols 개를 못 채우면 행마다 폭이 달라져 vstack 이 실패한다.
+                # (num_envs=5 -> 4 + 1 이면 348 vs 87 로 어긋난다.)
+                # 빈 칸을 0 으로 채워 폭을 맞춘다.
+                if len(chunk) < ncols:
+                    chunk += [np.zeros_like(chunk[0])] * (ncols - len(chunk))
+                rows.append(np.hstack(chunk))
 
-            grid_img = np.vstack(rows)   
-            cv2.imshow("depth_images_grid", grid_img)
-            cv2.waitKey(1)
+            grid_img = np.vstack(rows)
+            try:
+                cv2.imshow("depth_images_grid", grid_img)
+                cv2.waitKey(1)
+            except cv2.error as e:
+                # 헤드리스(SSH, --headless)이거나 OpenCV 가 GUI 지원 없이 빌드된 경우.
+                # 관측 계산 자체는 문제없으므로 디버그 창만 끄고 계속 진행한다.
+                self._can_show = False
+                warnings.warn(f"depth debug window disabled (no display / OpenCV built without GUI): {e}")
         return self.depth_buffer[:, -2].to(env.device)
 
     def _process_depth_image(self, depth_image):
@@ -226,4 +240,8 @@ class obervation_delta_yaw_ok(ManagerTermBase):
             asset: Articulation = env.scene[asset_cfg.name]
             _, _, yaw = euler_xyz_from_quat(asset.data.root_quat_w)
             self.delta_yaw = parkour_event.target_yaw - wrap_to_pi(yaw)
-        return self.delta_yaw < threshold
+        # IsaacLab 2.3 의 ObservationManager 는 배치 차원을 뗀 뒤(obs_dims[1:]) 남는 차원으로
+        # concatenate 축을 계산한다. (num_envs,) 를 그대로 돌려주면 남는 차원이 () 라
+        # term_dims 가 (N, 0) 이 되어 IndexError 가 난다. (num_envs, 1) 로 맞춰준다.
+        # 소비하는 쪽(on_policy_runner_with_extractor)은 1-D 마스크를 기대하므로 거기서 편다.
+        return (self.delta_yaw < threshold).unsqueeze(-1)

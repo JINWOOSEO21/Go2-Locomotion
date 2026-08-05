@@ -55,8 +55,17 @@ def reset_root_state(
     root_states = asset.data.default_root_state[env_ids].clone()
     origin = env.scene.env_origins[env_ids].clone()
     origin[:,-1] = 0
+    # env_origins 는 타일 '중앙' 이다. 로봇은 타일 앞쪽 시작 플랫폼
+    # (타일 시작점 0 ~ platform_len) 위에서 출발해야 한다.
+    # offset = 타일 시작점에서 spawn 까지의 x 거리 (platform_len 보다 작아야 함).
+    #
+    # 원본은 size[1](= y 폭 4.0m) + 3.0 = 7.0 을 빼고 있었는데, 이는 16x4 지형에서만
+    # 0.5*16 - 1.0 = 7.0 과 우연히 일치했다. size[0] 를 바꾸면 중앙은 이동하는데
+    # 빼는 값은 고정이라 spawn 이 코스 안쪽으로 밀려 구멍 위에서 시작하게 된다.
+    # size[0] 기준으로 계산해 지형 길이와 무관하게 항상 플랫폼 위에 놓는다.
+    back_from_center = terrain_gen_cfg.size[0] * 0.5 - offset
     positions = root_states[:, 0:3] + origin - \
-        torch.tensor((terrain_gen_cfg.size[1] + offset, 0, 0)).to(env.device)
+        torch.tensor((back_from_center, 0, 0)).to(env.device)
     asset.write_root_pose_to_sim(torch.cat([positions, root_states[:, 3:7]], dim=-1), env_ids=env_ids)
     asset.write_root_velocity_to_sim(root_states[:, 7:13] , env_ids=env_ids) ## it mush need for init vel
 
