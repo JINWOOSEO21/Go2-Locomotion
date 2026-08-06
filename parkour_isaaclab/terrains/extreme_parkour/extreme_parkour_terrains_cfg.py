@@ -49,15 +49,19 @@ class ExtremeParkourDemoTerrainCfg(ExtremeParkourRoughTerrainCfg):
     function = extreme_parkour_terrians.parkour_demo_terrain
 
 @configclass
-class ExtremeParkourInvertedPyramidStairsTerrainCfg(ExtremeParkourRoughTerrainCfg):
-    """IsaacLab ``HfInvertedPyramidStairsTerrainCfg`` 를 parkour 지형 규약에 맞춘 설정.
+class ExtremeParkourPyramidStairsTerrainCfg(ExtremeParkourRoughTerrainCfg):
+    """IsaacLab ``HfPyramidStairsTerrainCfg`` 를 parkour 지형 규약에 맞춘 설정.
 
-    step_height_range / step_width / inverted 는 원본과 같은 의미이고,
-    나머지는 4m 폭 복도형 타일에 맞추려고 추가한 값이다.
-    자세한 내용은 :func:`extreme_parkour_terrians.parkour_inverted_pyramid_stairs_terrain` 참고.
+    기본값은 원본과 같이 ``inverted=False`` 라, 직각 계단을 올라갔다가 내려오는
+    위로 솟은 피라미드가 된다. 구덩이형은 아래
+    :class:`ExtremeParkourInvertedPyramidStairsTerrainCfg` 를 쓴다.
+
+    step_height_range / step_width / platform_width(-> apex_width) / inverted 는 원본과
+    같은 의미이고, 나머지는 4m 폭 복도형 타일에 맞추려고 추가한 값이다.
+    자세한 내용은 :func:`extreme_parkour_terrians.parkour_pyramid_stairs_terrain` 참고.
     """
 
-    function = extreme_parkour_terrians.parkour_inverted_pyramid_stairs_terrain
+    function = extreme_parkour_terrians.parkour_pyramid_stairs_terrain
 
     step_height_range: tuple[float, float] = (0.05, 0.20)
     """계단 한 칸 높이의 (최소, 최대). 실제 높이는 difficulty 로 선형 보간한다 (원본과 동일)."""
@@ -73,13 +77,13 @@ class ExtremeParkourInvertedPyramidStairsTerrainCfg(ExtremeParkourRoughTerrainCf
     """
 
     apex_width: float = 1.6
-    """구덩이 바닥(피라미드 꼭짓점) 정사각형의 한 변 (m). 원본의 ``platform_width``.
+    """피라미드 꼭짓점(정상 평지 / 구덩이 바닥) 정사각형의 한 변 (m). 원본의 ``platform_width``.
 
     시작 플랫폼 길이인 ``platform_len`` 과 헷갈리지 않도록 이름을 바꿨다.
     """
 
-    inverted: bool = True
-    """True 면 안쪽으로 파 내려가는 구덩이, False 면 위로 쌓아 올린 피라미드."""
+    inverted: bool = False
+    """False 면 위로 쌓아 올린 피라미드(올라갔다 내려오기), True 면 파 내려간 구덩이."""
 
     pyramid_len: float = 8.0
     """피라미드가 차지할 x 구간 길이 (m)."""
@@ -88,31 +92,60 @@ class ExtremeParkourInvertedPyramidStairsTerrainCfg(ExtremeParkourRoughTerrainCf
     """시작 플랫폼 끝 ~ 피라미드 시작까지의 평지 길이 (m). 마지막 goal 여유로도 쓰인다."""
 
 @configclass
-class ExtremeParkourRandomUniformTerrainCfg(ExtremeParkourRoughTerrainCfg):
-    """IsaacLab ``HfRandomUniformTerrainCfg`` 를 parkour 지형 규약에 맞춘 설정.
+class ExtremeParkourInvertedPyramidStairsTerrainCfg(ExtremeParkourPyramidStairsTerrainCfg):
+    """IsaacLab ``HfInvertedPyramidStairsTerrainCfg`` 에 대응.
 
-    원본의 noise_range / noise_step / downsampled_scale 에 각각 uniform_ 접두사를 붙였다.
-    접두사 없는 이름들은 이 저장소에서 이미 '모든 지형 위에 덧씌우는 roughness' 용으로
-    쓰이고 PLAY 설정이 noise_range 를 (0.02, 0.02) 로 덮어쓰기 때문에, 그대로 쓰면
-    이 지형이 사실상 평지가 된다.
-    자세한 내용은 :func:`extreme_parkour_terrians.parkour_random_uniform_terrain` 참고.
+    원본과 마찬가지로 ``inverted=True`` 만 다른 서브클래스다.
     """
 
-    function = extreme_parkour_terrians.parkour_random_uniform_terrain
+    inverted: bool = True
 
-    uniform_noise_range: tuple[float, float] = (-0.10, 0.10)
-    """지형 높이의 (최소, 최대) (m). 원본의 ``noise_range``.
+@configclass
+class ExtremeParkourDiscreteObstaclesTerrainCfg(ExtremeParkourRoughTerrainCfg):
+    """IsaacLab ``HfDiscreteObstaclesTerrainCfg`` 를 parkour 지형 규약에 맞춘 설정.
 
-    원본은 difficulty 를 무시하고 이 값을 그대로 쓰지만, 여기서는 커리큘럼이 동작하도록
-    양쪽에 difficulty 를 곱한다. 난이도 0 이면 평지, 1 이면 이 진폭 그대로다.
+    obstacle_* 와 num_obstacles 는 원본과 같은 의미다.
+    원본의 ``platform_width`` (타일 한가운데를 비우는 정사각형) 는 parkour 에서는 쓸모가
+    없어 빼고, 대신 앞쪽 ``platform_len`` 을 시작 플랫폼으로 비운다.
+    자세한 내용은 :func:`extreme_parkour_terrians.parkour_discrete_obstacles_terrain` 참고.
     """
 
-    uniform_noise_step: float = 0.02
-    """두 점 사이 최소 높이 변화 (m). 원본의 ``noise_step``."""
+    function = extreme_parkour_terrians.parkour_discrete_obstacles_terrain
 
-    uniform_downsampled_scale: float | None = 0.2
-    """높이를 실제로 뽑는 격자 간격 (m). 원본의 ``downsampled_scale``.
+    obstacle_height_mode: str = "choice"
+    """"choice" 면 [-h, -h/2, h/2, h] 에서 고르고 "fixed" 면 h 로 고정 (원본과 동일)."""
 
-    이 간격으로 샘플링한 뒤 스플라인으로 보간하므로, 값이 클수록 요철이 넓고 완만해진다.
-    horizontal_scale 이상이어야 한다. None 이면 horizontal_scale 을 쓴다.
+    obstacle_width_range: tuple[float, float] = (0.4, 1.2)
+    """장애물 한 변의 (최소, 최대) (m). 원본과 동일하게 4픽셀 격자로 양자화된다."""
+
+    obstacle_height_range: tuple[float, float] = (0.05, 0.20)
+    """장애물 높이의 (최소, 최대) (m). difficulty 로 선형 보간한다 (원본과 동일)."""
+
+    num_obstacles: int = 40
+    """타일에 뿌릴 장애물 개수."""
+
+    goal_clear_width: float = 0.6
+    """각 goal 둘레를 평지로 미는 정사각형의 한 변 (m).
+
+    원본에는 goal 이 없어 필요 없던 값이다. parkour 에서는 goal 이 기둥 꼭대기나 구덩이
+    바닥에 찍히면 로봇이 도달할 수 없어 태스크가 깨지므로 디딜 자리를 확보한다.
     """
+
+@configclass
+class ExtremeParkourRandomGridTerrainCfg(ExtremeParkourRoughTerrainCfg):
+    """IsaacLab ``MeshRandomGridTerrainCfg`` 를 parkour 지형 규약에 맞춘 설정.
+
+    grid_width / grid_height_range 는 원본과 같은 의미다. 원본은 trimesh 지형이지만
+    여기서는 같은 '칸별 랜덤 높이' 를 높이맵으로 구현했다 (x_edge_mask 를 만들려면
+    높이맵이 필요하다). 원본의 정사각 타일 제한도 자연히 사라진다.
+    자세한 내용은 :func:`extreme_parkour_terrians.parkour_random_grid_terrain` 참고.
+    """
+
+    function = extreme_parkour_terrians.parkour_random_grid_terrain
+
+    grid_width: float = 0.5
+    """격자 칸 한 변의 길이 (m). 원본의 ``grid_width``."""
+
+    grid_height_range: tuple[float, float] = (0.02, 0.10)
+    """칸 높이 진폭의 (최소, 최대) (m). difficulty 로 보간한 값을 h 라 할 때
+    각 칸의 윗면은 ``uniform(-h, +h)`` 다 (원본과 동일)."""

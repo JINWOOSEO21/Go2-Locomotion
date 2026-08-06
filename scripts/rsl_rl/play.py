@@ -47,6 +47,16 @@ parser.add_argument(
 )
 parser.add_argument("--fps", type=int, default=50, help="--multicam 출력 fps (sim 은 1/step_dt = 50).")
 parser.add_argument(
+    "--cam_res",
+    type=str,
+    default=None,
+    help=(
+        "--multicam 녹화 카메라 해상도 'WxH'. 기본값은 씬 설정값(960x540)이다. "
+        "record_camera 는 env 마다 1대라 VRAM 사용량이 env 수에 비례한다. "
+        "지형이 늘어 --num_envs 를 키우다 CUDA OOM 이 나면 '800x450' 처럼 낮추면 된다."
+    ),
+)
+parser.add_argument(
     "--cam_offset",
     type=str,
     default="0,2.6,1.6",
@@ -120,6 +130,11 @@ def main():
     env_cfg = parse_env_cfg(
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
+    if args_cli.cam_res is not None:
+        w, h = (int(v) for v in args_cli.cam_res.lower().split("x"))
+        env_cfg.scene.record_camera.width = w
+        env_cfg.scene.record_camera.height = h
+        print(f"[INFO] record_camera 해상도를 {w}x{h} 로 바꾼다.")
     agent_cfg: ParkourRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
     # specify directory for logging experiments

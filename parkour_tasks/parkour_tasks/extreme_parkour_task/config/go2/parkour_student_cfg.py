@@ -68,7 +68,8 @@ class ParkourStudentSceneCfg(ParkourTeacherSceneCfg):
             elif key =='parkour_flat':
                 sub_terrain.proportion = 0.05
 
-            elif key in ('parkour_pyramid_stairs', 'parkour_random_uniform'):
+            elif key in ('parkour_pyramid_stairs', 'parkour_pyramid_stairs_up',
+                         'parkour_discrete_obstacles', 'parkour_random_grid'):
                 # 나중에 추가된 지형들. 이미 학습된 체크포인트와 분포를 맞추려고 학습에서는
                 # 빼둔다. 이 지형까지 포함해 재학습하려면 0.2 로 올리면 된다.
                 sub_terrain.proportion = 0.0
@@ -186,22 +187,24 @@ class UnitreeGo2StudentParkourEnvCfg_PLAY(UnitreeGo2StudentParkourEnvCfg_EVAL):
             # 24m 면 5종 지형 모두 잘림 없이 들어간다. generator.size 는
             # super().__init__ 에서 sub_cfg.size 로 전파된다.
             self.scene.terrain.terrain_generator.size = (24.0, 4.0)
-            # 컬럼 수를 지형 종류 수에 맞추면 로봇 6마리가 6종에 1마리씩 배정된다.
+            # 컬럼 수를 지형 종류 수에 맞추면 로봇 8마리가 8종에 1마리씩 배정된다.
             #   col 0 gap / 1 hurdle / 2 step / 3 parkour(램프)
-            #       / 4 pyramid_stairs / 5 random_uniform
+            #       / 4 pyramid_stairs(구덩이) / 5 pyramid_stairs_up(오르막)
+            #       / 6 discrete_obstacles / 7 random_grid
             #   terrain_types = floor(arange(num_envs) / (num_envs/num_cols))
             # 컬럼→지형 매핑은 아래 proportion 루프의 결과로 정해진다. 비중이 0 이 아닌
             # 지형이 정확히 num_cols 개일 때만 1:1 로 떨어지므로, 둘을 같이 고쳐야 한다.
             # (예전에 num_cols=5 인데 유효 지형이 4종이라 col 0,1 이 모두 gap 이었다.)
-            self.scene.terrain.terrain_generator.num_cols = 6
+            self.scene.terrain.terrain_generator.num_cols = 8
             # num_rows 는 부모(EVAL)의 5 를 그대로 쓴다 = 커리큘럼 5단계.
             # VRAM 이 부족할 때는 여기서 줄일 수 있다. difficulty_range 를 (d, d) 로
             # 고정한 경우에는 모든 행이 같은 난이도라 로봇이 겪는 코스가 달라지지 않는다.
             # 다만 난이도를 범위로 쓸 때는 커리큘럼 단계 수가 줄어드니 주의.
         self.events.push_by_setting_velocity = None
-        # 위 num_cols 와 짝을 맞춰 정확히 6종만 남긴다:
+        # 위 num_cols 와 짝을 맞춰 정확히 8종만 남긴다:
         #   parkour_gap / parkour_hurdle / parkour_step / parkour
-        #   / parkour_pyramid_stairs / parkour_random_uniform
+        #   / parkour_pyramid_stairs / parkour_pyramid_stairs_up
+        #   / parkour_discrete_obstacles / parkour_random_grid
         # parkour_demo 는 EVAL 에서 0 으로 꺼두는데 예전 코드가 여기서 다시 켜고 있었다.
         # num_cols=4 일 때는 컬럼이 모자라 우연히 안 뽑혔지만, 5 로 늘리면 마지막 컬럼을
         # demo 가 차지해 피라미드가 나오지 않는다.

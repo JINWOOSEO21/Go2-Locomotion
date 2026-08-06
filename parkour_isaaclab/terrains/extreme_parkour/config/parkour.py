@@ -72,24 +72,56 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
                         pyramid_len=8.0,
                         run_up_len=1.5,
                         ),
-        # IsaacLab HfRandomUniformTerrainCfg 를 parkour 규약에 맞춘 지형.
-        # 위 피라미드와 같은 이유로 proportion=0.0 (학습 분포 유지, PLAY/EVAL 에서만 켠다).
+        # 같은 함수의 inverted=False 판. 구덩이로 내려가는 대신 직각 계단을 올라갔다
+        # 내려온다. 올라가는 쪽이 더 힘드므로 계단 한 칸을 조금 낮게 잡았다
+        # (난이도 1.0 에서 4칸 x 0.16 = 0.64m 상승).
         #
-        # apply_roughness 는 끈다. 다른 지형은 '지물 + 잔잔한 노이즈' 라서 roughness 를
-        # 덧씌우지만, 여기서는 균등 노이즈 자체가 지형이라 두 번 얹을 이유가 없다.
+        # slope_threshold 를 반드시 낮춰야 '직각' 계단이 된다.
+        # convert_height_field_to_mesh 는 한 픽셀 사이 높이차가
+        #   slope_threshold * horizontal_scale / vertical_scale
+        # 를 넘을 때만 그 면을 수직으로 세운다. 기본값 1.5 + horizontal_scale 0.1 이면
+        # 0.15m 를 넘는 단차만 직각이 되고, 그보다 낮은 계단은 폭 0.1m 짜리 경사로로
+        # 렌더된다(실측: 난이도 0.7 에서 x_edge_mask 가 13픽셀밖에 안 잡혔다).
+        # 0.3 이면 기준이 0.03m 라 어느 난이도에서든 계단 면이 수직이 된다.
+        # roughness 노이즈는 ±0.02m 라 이 기준에 걸리지 않는다.
+        "parkour_pyramid_stairs_up": ExtremeParkourPyramidStairsTerrainCfg(
+                        proportion=0.0,
+                        apply_roughness=True,
+                        step_height_range=(0.05, 0.16),
+                        step_width=0.3,
+                        step_depth=0.8,
+                        apex_width=1.6,
+                        pyramid_len=8.0,
+                        run_up_len=1.5,
+                        slope_threshold=0.3,
+                        ),
+        # IsaacLab HfDiscreteObstaclesTerrainCfg 를 parkour 규약에 맞춘 지형.
         # x_range 는 goal 간격이다. 7구간 * 최대 2.5m + 플랫폼 2.5m = 20m 로 24m 타일에 들어간다.
-        "parkour_random_uniform": ExtremeParkourRandomUniformTerrainCfg(
+        "parkour_discrete_obstacles": ExtremeParkourDiscreteObstaclesTerrainCfg(
+                        proportion=0.0,
+                        apply_roughness=True,
+                        obstacle_height_mode="choice",
+                        obstacle_width_range=(0.4, 1.2),
+                        obstacle_height_range=(0.05, 0.20),
+                        num_obstacles=40,
+                        goal_clear_width=0.6,
+                        x_range=(1.5, 2.5),
+                        ),
+        # IsaacLab MeshRandomGridTerrainCfg 를 parkour 규약에 맞춘 지형.
+        # apply_roughness 는 끈다. 칸 윗면이 평평한 것이 이 지형의 성격인데 노이즈를
+        # 덧씌우면 그 평평함이 사라진다.
+        # grid_height_range 는 원본 프리셋과 같은 (0.02, 0.10) 을 쓴다.
+        #
+        # slope_threshold 는 위 계단과 같은 이유로 낮춘다. 원본은 상자를 쌓아 만들어
+        # 칸 옆면이 항상 수직인데, 기본값 1.5 로 두면 칸 경계 대부분이 0.15m 를 못 넘어
+        # 경사로가 되어버린다(실측: 난이도 0.7 에서 x_edge_mask 가 0픽셀이었다).
+        "parkour_random_grid": ExtremeParkourRandomGridTerrainCfg(
                         proportion=0.0,
                         apply_roughness=False,
-                        # IsaacLab ROUGH_TERRAINS_CFG 의 HfRandomUniformTerrainCfg 는
-                        # noise_range=(0.02, 0.10) 즉 peak-to-peak 8cm 다. 여기서는 시작
-                        # 플랫폼(높이 0)과 이어지도록 0 을 중심으로 대칭을 주되 진폭은
-                        # 비슷하게 맞춘다 (난이도 1.0 에서 p2p 10cm).
-                        # 참고로 다른 지형에 공통으로 덧씌우는 roughness 는 최대 6cm 다.
-                        uniform_noise_range=(-0.05, 0.05),
-                        uniform_noise_step=0.02,
-                        uniform_downsampled_scale=0.2,
+                        grid_width=0.5,
+                        grid_height_range=(0.02, 0.10),
                         x_range=(1.5, 2.5),
+                        slope_threshold=0.3,
                         ),
 
     },
