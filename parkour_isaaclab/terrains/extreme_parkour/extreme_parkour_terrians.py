@@ -488,3 +488,108 @@ def parkour_inverted_pyramid_stairs_terrain(
     return height_field_raw, goals * cfg.horizontal_scale, goal_heights * cfg.vertical_scale
 
 
+@parkour_field_to_mesh
+def parkour_random_uniform_terrain(
+    difficulty: float,
+    cfg: extreme_parkour_terrains_cfg.ExtremeParkourRandomUniformTerrainCfg,
+    num_goals: int,
+    )->tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """IsaacLab 의 :func:`isaaclab.terrains.height_field.hf_terrains.random_uniform_terrain`
+    (= ``HfRandomUniformTerrainCfg`` 가 쓰는 함수) 을 parkour 지형 규약에 맞춘 것.
+
+    높이를 다운샘플 격자에서 균등분포로 뽑고 스플라인으로 보간해 올리는 핵심 절차는
+    원본 그대로다. 달라진 점은 다섯 가지다.
+
+    1. 시그니처. 원본은 ``(difficulty, cfg)`` 로 높이맵만 돌려주지만 parkour 생성기는
+       ``cfg.function(difficulty, cfg, num_goals)`` 를 부르고
+       ``(mesh, origin, goals, goal_heights, x_edge_mask)`` 를 기대한다.
+       그래서 ``@height_field_to_mesh`` 대신 ``@parkour_field_to_mesh`` 를 쓴다.
+    2. difficulty. 원본은 docstring 에 "The difficulty parameter is ignored for this
+       terrain" 이라고 못박고 noise_range 를 그대로 쓴다. 그런데 parkour 지형은
+       row = 커리큘럼 단계로 난이도를 올리는 구조라, 그대로 두면 레벨이 올라도 지형이
+       전혀 어려워지지 않아 커리큘럼이 무의미해진다. 여기서는 노이즈 상·하한에
+       difficulty 를 곱해 난이도 0 이면 평지, 1 이면 설정한 진폭이 되게 한다.
+    3. 시작 플랫폼. 다른 parkour 지형과 마찬가지로 앞쪽 ``platform_len`` 은 평평하게
+       남긴다. 로봇은 타일 시작점에서 1.0m 들어온 지점에 스폰되므로, 울퉁불퉁한 면
+       위에서 시작하면 리셋 직후 자세가 무너진다.
+    4. goal. 코스를 따라 8개를 깔고 각 goal 높이를 높이맵에서 읽는다. 지형이 균질해서
+       특정 지물에 goal 을 붙일 수 없으므로 다른 지형(gap/hurdle)과 같은 방식으로
+       ``x_range`` / ``y_range`` 에서 간격을 뽑아 배치한다.
+    5. 파라미터 이름. 이 저장소에서 ``noise_range`` / ``noise_step`` / ``downsampled_scale``
+       은 이미 '모든 지형 위에 덧씌우는 roughness'(:func:`random_uniform_terrain`) 용이고,
+       PLAY 설정이 ``noise_range`` 를 (0.02, 0.02) 로 덮어쓴다. 지형 자체를 정의하는 값이
+       거기에 먹히면 이 지형은 사실상 평지가 되어버리므로 ``uniform_*`` 로 분리했다.
+       (원본의 noise_range / noise_step / downsampled_scale 에 각각 대응한다.)
+    """
+    width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
+    length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
+    mid_y = length_pixels // 2  # length is actually y width
+
+    # -- 다운샘플 격자 (원본과 동일한 검사)
+    downsampled_scale = cfg.uniform_downsampled_scale
+    if downsampled_scale is None:
+        downsampled_scale = cfg.horizontal_scale
+    elif downsampled_scale < cfg.horizontal_scale:
+        raise ValueError(
+            "Downsampled scale must be larger than or equal to the horizontal scale:"
+            f" {downsampled_scale} < {cfg.horizontal_scale}."
+        )
+    width_downsampled = int(cfg.size[0] / downsampled_scale)
+    length_downsampled = int(cfg.size[1] / downsampled_scale)
+
+    # -- 높이 범위. 원본과 달리 difficulty 로 진폭을 키운다 (위 2번).
+    height_min = round(cfg.uniform_noise_range[0] * difficulty / cfg.vertical_scale)
+    height_max = round(cfg.uniform_noise_range[1] * difficulty / cfg.vertical_scale)
+    height_step = max(1, round(cfg.uniform_noise_step / cfg.vertical_scale))
+
+    if height_max <= height_min:
+        # difficulty 0 이거나 진폭이 vertical_scale 보다 작으면 평지다.
+        height_field_raw = np.zeros((width_pixels, length_pixels))
+    else:
+        height_range = np.arange(height_min, height_max + height_step, height_step)
+        height_field_downsampled = np.random.choice(height_range, size=(width_downsampled, length_downsampled))
+        x = np.linspace(0, cfg.size[0] * cfg.horizontal_scale, width_downsampled)
+        y = np.linspace(0, cfg.size[1] * cfg.horizontal_scale, length_downsampled)
+        func = interpolate.RectBivariateSpline(x, y, height_field_downsampled)
+        x_upsampled = np.linspace(0, cfg.size[0] * cfg.horizontal_scale, width_pixels)
+        y_upsampled = np.linspace(0, cfg.size[1] * cfg.horizontal_scale, length_pixels)
+        height_field_raw = np.rint(func(x_upsampled, y_upsampled)).astype(np.int16).astype(float)
+
+    # -- 시작 플랫폼은 평평하게 (위 3번)
+    platform_len = round(cfg.platform_len / cfg.horizontal_scale)
+    platform_height = round(cfg.platform_height / cfg.vertical_scale)
+    height_field_raw[0:platform_len, :] = platform_height
+
+    # -- goals: 다른 지형과 같은 방식으로 x_range/y_range 에서 간격을 뽑는다
+    dis_x_min = round(cfg.x_range[0] / cfg.horizontal_scale)
+    dis_x_max = round(cfg.x_range[1] / cfg.horizontal_scale)
+    dis_y_min = round(cfg.y_range[0] / cfg.horizontal_scale)
+    dis_y_max = round(cfg.y_range[1] / cfg.horizontal_scale)
+
+    goals = np.zeros((num_goals, 2))
+    goal_heights = np.zeros((num_goals))
+    goals[0] = [platform_len - 1, mid_y]
+    goal_heights[0] = platform_height
+
+    dis_x = platform_len
+    for i in range(num_goals - 2):
+        rand_x = np.random.randint(dis_x_min, dis_x_max)
+        rand_y = np.random.randint(dis_y_min, dis_y_max)
+        dis_x += rand_x
+        goal_x = min(dis_x - rand_x // 2, width_pixels - 1)
+        goal_y = int(np.clip(mid_y + rand_y, 0, length_pixels - 1))
+        goals[i + 1] = [goal_x, goal_y]
+        goal_heights[i + 1] = height_field_raw[int(goal_x), goal_y]
+    final_dis_x = dis_x + np.random.randint(dis_x_min, dis_x_max)
+    if final_dis_x > width_pixels:
+        final_dis_x = width_pixels - 0.5 // cfg.horizontal_scale
+    goals[-1] = [final_dis_x, mid_y]
+    goal_heights[-1] = height_field_raw[int(min(final_dis_x, width_pixels - 1)), mid_y]
+
+    height_field_raw = padding_height_field_raw(height_field_raw, cfg)
+    if cfg.apply_roughness:
+        height_field_raw = random_uniform_terrain(difficulty, cfg, height_field_raw)
+
+    return height_field_raw, goals * cfg.horizontal_scale, goal_heights * cfg.vertical_scale
+
+

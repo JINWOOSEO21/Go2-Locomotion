@@ -86,3 +86,33 @@ class ExtremeParkourInvertedPyramidStairsTerrainCfg(ExtremeParkourRoughTerrainCf
 
     run_up_len: float = 1.5
     """시작 플랫폼 끝 ~ 피라미드 시작까지의 평지 길이 (m). 마지막 goal 여유로도 쓰인다."""
+
+@configclass
+class ExtremeParkourRandomUniformTerrainCfg(ExtremeParkourRoughTerrainCfg):
+    """IsaacLab ``HfRandomUniformTerrainCfg`` 를 parkour 지형 규약에 맞춘 설정.
+
+    원본의 noise_range / noise_step / downsampled_scale 에 각각 uniform_ 접두사를 붙였다.
+    접두사 없는 이름들은 이 저장소에서 이미 '모든 지형 위에 덧씌우는 roughness' 용으로
+    쓰이고 PLAY 설정이 noise_range 를 (0.02, 0.02) 로 덮어쓰기 때문에, 그대로 쓰면
+    이 지형이 사실상 평지가 된다.
+    자세한 내용은 :func:`extreme_parkour_terrians.parkour_random_uniform_terrain` 참고.
+    """
+
+    function = extreme_parkour_terrians.parkour_random_uniform_terrain
+
+    uniform_noise_range: tuple[float, float] = (-0.10, 0.10)
+    """지형 높이의 (최소, 최대) (m). 원본의 ``noise_range``.
+
+    원본은 difficulty 를 무시하고 이 값을 그대로 쓰지만, 여기서는 커리큘럼이 동작하도록
+    양쪽에 difficulty 를 곱한다. 난이도 0 이면 평지, 1 이면 이 진폭 그대로다.
+    """
+
+    uniform_noise_step: float = 0.02
+    """두 점 사이 최소 높이 변화 (m). 원본의 ``noise_step``."""
+
+    uniform_downsampled_scale: float | None = 0.2
+    """높이를 실제로 뽑는 격자 간격 (m). 원본의 ``downsampled_scale``.
+
+    이 간격으로 샘플링한 뒤 스플라인으로 보간하므로, 값이 클수록 요철이 넓고 완만해진다.
+    horizontal_scale 이상이어야 한다. None 이면 horizontal_scale 을 쓴다.
+    """

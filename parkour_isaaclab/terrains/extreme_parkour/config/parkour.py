@@ -72,6 +72,25 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
                         pyramid_len=8.0,
                         run_up_len=1.5,
                         ),
+        # IsaacLab HfRandomUniformTerrainCfg 를 parkour 규약에 맞춘 지형.
+        # 위 피라미드와 같은 이유로 proportion=0.0 (학습 분포 유지, PLAY/EVAL 에서만 켠다).
+        #
+        # apply_roughness 는 끈다. 다른 지형은 '지물 + 잔잔한 노이즈' 라서 roughness 를
+        # 덧씌우지만, 여기서는 균등 노이즈 자체가 지형이라 두 번 얹을 이유가 없다.
+        # x_range 는 goal 간격이다. 7구간 * 최대 2.5m + 플랫폼 2.5m = 20m 로 24m 타일에 들어간다.
+        "parkour_random_uniform": ExtremeParkourRandomUniformTerrainCfg(
+                        proportion=0.0,
+                        apply_roughness=False,
+                        # IsaacLab ROUGH_TERRAINS_CFG 의 HfRandomUniformTerrainCfg 는
+                        # noise_range=(0.02, 0.10) 즉 peak-to-peak 8cm 다. 여기서는 시작
+                        # 플랫폼(높이 0)과 이어지도록 0 을 중심으로 대칭을 주되 진폭은
+                        # 비슷하게 맞춘다 (난이도 1.0 에서 p2p 10cm).
+                        # 참고로 다른 지형에 공통으로 덧씌우는 roughness 는 최대 6cm 다.
+                        uniform_noise_range=(-0.05, 0.05),
+                        uniform_noise_step=0.02,
+                        uniform_downsampled_scale=0.2,
+                        x_range=(1.5, 2.5),
+                        ),
 
     },
 )
