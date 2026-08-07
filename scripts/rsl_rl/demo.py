@@ -741,7 +741,11 @@ def run_loop(demo_go2, obs, extras, num_prop, num_scan, num_priv_explicit):
                 priv_states_estimated = demo_go2.estimator.inference(obs[:, :num_prop])
                 obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = priv_states_estimated
                 demo_go2.apply_teleop_yaw(obs)
-                action = demo_go2.policy(obs)
+                # hist_encoding=True 는 priv_latent 대신 관측 히스토리 인코더가 뽑은
+                # latent 를 쓴다는 뜻이다(RMA 의 adaptation module 경로). 실기에서는
+                # priv_latent 를 못 받으므로 이쪽이 배포 경로이고, play.py 도 같은 값을
+                # 쓴다. 기본값 False 로 두면 데모만 특권 정보를 보는 셈이라 맞춘다.
+                action = demo_go2.policy(obs, hist_encoding=True)
             else:
                 depth_camera = extras["observations"]['depth_camera'].to(demo_go2.device)
                 # --with_depth 녹화용. 정책에 먹인 바로 그 텐서를 넘겨 준다.
