@@ -634,8 +634,8 @@ def parkour_trapezoid_stairs_terrain(
 
     - 단차(riser) 는 ``step_height`` (difficulty 수식) 로 정한다. 기본
       '0.05 + 0.18*difficulty' 는 10행 커리큘럼에서 정확히 5, 7, ..., 23cm 가 된다.
-    - 단의 개수는 ``num_steps`` (기본 5개) 로 고정이고, 평지 높이는 자연히
-      num_steps * step_height 가 된다.
+    - 단의 개수는 타일마다 ``num_steps_range`` (기본 3~7개, 양 끝 포함) 에서
+      뽑고, 평지 높이는 자연히 뽑힌 단 수 * step_height 가 된다.
     - 디딤판(tread) 깊이는 step 지형과 같은 방식으로 계단마다 ``x_range`` 에서
       따로 뽑는다 (오르막/내리막 각각 독립 샘플). step 지형의 x_range (0.3, 1.5)
       를 그대로 쓰면 왕복 10칸이 타일을 넘칠 수 있어 기본값을 (0.3, 0.8) 로 줄였다.
@@ -655,21 +655,22 @@ def parkour_trapezoid_stairs_terrain(
     height_field_raw[0:platform_len, :] = platform_height
 
     step_height = round(eval(cfg.step_height, {"difficulty": difficulty}) / cfg.vertical_scale)
+    num_steps = np.random.randint(cfg.num_steps_range[0], cfg.num_steps_range[1] + 1)
     dis_x_min = round(cfg.x_range[0] / cfg.horizontal_scale)
     dis_x_max = round(cfg.x_range[1] / cfg.horizontal_scale)
     plateau_len = round(np.random.uniform(*cfg.plateau_len_range) / cfg.horizontal_scale)
 
     # 디딤판 깊이를 미리 다 뽑고, 넘치면 비율로 줄여 타일에 맞춘다.
     end_margin = round(cfg.end_margin / cfg.horizontal_scale)
-    treads = np.random.randint(dis_x_min, dis_x_max, size=2 * cfg.num_steps)
+    treads = np.random.randint(dis_x_min, dis_x_max, size=2 * num_steps)
     avail = width_pixels - platform_len - plateau_len - end_margin
     if treads.sum() > avail:
         treads = np.maximum((treads * (avail / treads.sum())).astype(int), 2)
 
-    plateau_height = cfg.num_steps * step_height
+    plateau_height = num_steps * step_height
     dis_x = platform_len
     # 오르막 계단: i번째 단의 윗면 높이는 (i+1)*step_height
-    for i in range(cfg.num_steps):
+    for i in range(num_steps):
         depth = treads[i]
         height_field_raw[dis_x:dis_x + depth, y_lo:y_hi] = (i + 1) * step_height
         dis_x += depth
@@ -678,8 +679,8 @@ def parkour_trapezoid_stairs_terrain(
     height_field_raw[up_end:up_end + plateau_len, y_lo:y_hi] = plateau_height
     dis_x = up_end + plateau_len
     # 내리막 계단: 마지막 단에서 바닥(0)에 닿는다
-    for i in range(cfg.num_steps):
-        depth = treads[cfg.num_steps + i]
+    for i in range(num_steps):
+        depth = treads[num_steps + i]
         height_field_raw[dis_x:dis_x + depth, y_lo:y_hi] = plateau_height - (i + 1) * step_height
         dis_x += depth
     down_end = dis_x

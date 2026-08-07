@@ -193,8 +193,11 @@ class ExtremeParkourTrapezoidStairsTerrainCfg(ExtremeParkourRoughTerrainCfg):
     step_height: str = '0.05 + 0.18*difficulty'
     """단차 높이 (m). 10행 커리큘럼(difficulty = row/9)에서 5, 7, ..., 23cm 가 된다."""
 
-    num_steps: int = 5
-    """오르막 계단의 단 수 (내리막도 같은 수). 평지 높이 = num_steps * step_height."""
+    num_steps_range: tuple[int, int] = (3, 7)
+    """오르막 계단 단 수의 랜덤 범위 (양 끝 포함, 내리막도 같은 수).
+    타일마다 하나를 뽑으며, 평지 높이 = 뽑힌 단 수 * step_height 가 된다.
+    (최대 7단 x 23cm = 1.61m. 단 수가 많고 디딤판이 깊게 뽑혀 타일을 넘치면
+    디딤판 깊이를 비율로 줄여 맞춘다.)"""
 
     x_range: tuple[float, float] = (0.3, 0.8)
     """디딤판(tread) 깊이의 랜덤 범위 (m). step 지형의 x_range(0.3, 1.5) 방식을
