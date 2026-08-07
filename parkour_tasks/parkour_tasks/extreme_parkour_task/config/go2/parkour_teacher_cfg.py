@@ -91,11 +91,12 @@ class UnitreeGo2TeacherParkourEnvCfg_EVAL(UnitreeGo2TeacherParkourEnvCfg):
         self.events.randomize_rigid_body_mass = None
         self.events.push_by_setting_velocity.interval_range_s = (6.,6.)
         self.commands.base_velocity.resampling_time_range = (60.,60.)
-        # 원조 4종 균등. 예전 코드는 `if key == [리스트]` 라 조건이 항상 False 여서
-        # 이 블록이 한 번도 실행되지 않았다 (= 학습 분포 그대로 평가되고 있었다).
-        # 프리셋으로 바꾸면서 원래 의도(4종 0.25 + noise 고정)대로 살렸다.
+        # 학습(trapezoid_train)과 같은 3종을 균등하게 평가한다.
+        # 여기가 "eval_core"(원조 4종)였는데, 지금 teacher 는 그 4종을 한 번도
+        # 본 적이 없으므로 학습 안 한 지형 위에서 평가하는 꼴이었다.
+        # 원조 4종 체크포인트를 평가할 때는 "eval_core" 로 되돌릴 것.
         apply_terrain_preset(
-            self.scene.terrain.terrain_generator, "eval_core",
+            self.scene.terrain.terrain_generator, "trapezoid_train_all",
             active_overrides={"noise_range": (0.02, 0.02)},
         )
 
@@ -113,9 +114,14 @@ class UnitreeGo2TeacherParkourEnvCfg_PLAY(UnitreeGo2TeacherParkourEnvCfg_EVAL):
         if self.scene.terrain.terrain_generator is not None:
             self.scene.terrain.terrain_generator.difficulty_range = (0.7,1.0)
         self.events.push_by_setting_velocity = None
-        # 학습 지형(사다리꼴 2종)만 균등. flat 은 학습 보조라 뺀다.
+        # 학습에 실제로 쓰는 3종(사다리꼴 램프/계단 + flat)만 균등하게 본다.
+        # one_col_per_terrain=True 가 num_cols 를 활성 지형 수(=3)에 맞춰
+        # 커리큘럼 컬럼→지형 매핑을 1:1 로 떨어뜨린다. 부모(EVAL)가 잡아 둔
+        # num_cols=5 는 여기서 덮어써진다.
+        # 사다리꼴 2종만 보고 싶으면 "trapezoid_only" 로 바꾸면 된다.
         apply_terrain_preset(
-            self.scene.terrain.terrain_generator, "trapezoid_only",
+            self.scene.terrain.terrain_generator, "trapezoid_train_all",
+            one_col_per_terrain=True,
             active_overrides={"noise_range": (0.02, 0.02)},
         )
 

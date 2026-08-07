@@ -191,6 +191,13 @@ TERRAIN_PRESETS: dict[str, dict[str, float]] = {
     "trapezoid_train": {**{k: 0.45 for k in TRAPEZOID_TERRAINS}, "parkour_flat": 0.1},
     # PLAY/EVAL 용: 사다리꼴 2종만 균등 (flat 은 학습 보조라 뺀다).
     "trapezoid_only": {k: 1.0 for k in TRAPEZOID_TERRAINS},
+    # PLAY/EVAL 용: trapezoid_train 이 실제로 학습에 쓰는 3종을 '균등하게' 본다.
+    # trapezoid_train 을 그대로 PLAY 에 쓰면 안 된다. 커리큘럼 모드의 컬럼→지형
+    # 매핑은 cumsum(proportion) 을 num_cols 로 잘라 정하는데(_generate_curriculum_terrains),
+    # 0.45/0.45/0.1 이면 flat 구간(0.9~1.0)에 걸리는 컬럼이 거의 안 나와
+    # flat 이 화면에서 통째로 사라진다. 균등 + one_col_per_terrain=True 면
+    # 컬럼 하나가 지형 하나에 1:1 로 떨어진다.
+    "trapezoid_train_all": {k: 1.0 for k in (*TRAPEZOID_TERRAINS, "parkour_flat")},
     # teacher 학습: 원조 4종 + flat. (기존 체크포인트와 분포를 맞춰야 하므로
     # EXTRA_TERRAINS 는 뺀다. 포함해 재학습하려면 여기에 추가할 것.)
     "teacher_train": {**{k: 0.2 for k in CORE_TERRAINS}, "parkour_flat": 0.2},
