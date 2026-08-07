@@ -188,8 +188,13 @@ class image_features(ManagerTermBase):
             rows = []
             ncols = 4
             for i in range(0, len(depth_images_norm), ncols):
-                row = np.hstack(depth_images_norm[i:i+ncols])  
-                rows.append(row)
+                chunk = list(depth_images_norm[i:i+ncols])
+                # 마지막 행이 ncols 개를 못 채우면 행마다 폭이 달라져 vstack 이 실패한다.
+                # (num_envs=5 -> 4 + 1 이면 348 vs 87 로 어긋난다.)
+                # 빈 칸을 0 으로 채워 폭을 맞춘다.
+                if len(chunk) < ncols:
+                    chunk += [np.zeros_like(chunk[0])] * (ncols - len(chunk))
+                rows.append(np.hstack(chunk))
 
             grid_img = np.vstack(rows)
             try:
