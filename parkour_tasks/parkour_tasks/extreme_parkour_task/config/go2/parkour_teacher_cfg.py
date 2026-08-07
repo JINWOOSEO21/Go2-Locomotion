@@ -65,7 +65,7 @@ class UnitreeGo2TeacherParkourEnvCfg(ParkourManagerBasedRLEnvCfg):
         # 지형 분포는 parkour.py 의 TERRAIN_PRESETS 한 곳에서만 관리한다.
         # EXTREME_PARKOUR_TERRAINS_CFG 는 모듈 레벨 공유 객체라 다른 env cfg 가
         # 먼저 proportion 을 바꿨을 수 있으므로, 기본값에 기대지 말고 항상 명시한다.
-        apply_terrain_preset(self.scene.terrain.terrain_generator, "teacher_train")
+        apply_terrain_preset(self.scene.terrain.terrain_generator, "trapezoid_train")
         self.actions.joint_pos.use_delay = False
         self.actions.joint_pos.history_length = 1
         self.events.random_camera_position = None

@@ -65,8 +65,8 @@ class ParkourStudentSceneCfg(ParkourTeacherSceneCfg):
             sub_terrain.use_simplified = True
             sub_terrain.horizontal_scale = 0.1
         # 지형 분포는 parkour.py 의 TERRAIN_PRESETS 에서 관리한다.
-        # 이식 지형 4종을 포함해 재학습하려면 student_train 프리셋을 고칠 것.
-        apply_terrain_preset(self.terrain.terrain_generator, "student_train")
+        # 원래의 원조 5종 분포로 되돌리려면 "student_train" 으로 바꾸면 된다.
+        apply_terrain_preset(self.terrain.terrain_generator, "trapezoid_train")
         # gap/hurdle/step 은 코스 중심선을 살짝 흔든다 ('parkour' 는 자체 y_range 를 쓴다).
         for key in ('parkour_gap', 'parkour_hurdle', 'parkour_step'):
             self.terrain.terrain_generator.sub_terrains[key].y_range = (-0.1, 0.1)
