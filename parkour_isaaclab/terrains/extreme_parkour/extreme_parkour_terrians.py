@@ -493,6 +493,210 @@ def parkour_pyramid_stairs_terrain(
     return height_field_raw, goals * cfg.horizontal_scale, goal_heights * cfg.vertical_scale
 
 
+def _lay_goals_over_trapezoid(
+    cfg,
+    height_field_raw: np.ndarray,
+    num_goals: int,
+    course_start: int,
+    course_end: int,
+    width_pixels: int,
+    length_pixels: int,
+    y_lo: int,
+    y_hi: int,
+    ):
+    """사다리꼴(오르막-평지-내리막) 코스용 goal 배치.
+
+    중간 goal 은 코스 구간 [course_start, course_end] 에 등간격으로 깔고
+    (pyramid_stairs 와 같은 방식 — 경사/계단이 몇 픽셀이든 오르막-평지-내리막을
+    고르게 커버한다), y 는 ``cfg.y_range`` 로 흔들어 코스 폭 안에서 랜덤화한다.
+    goal 높이는 높이맵에서 그대로 읽는다.
+
+    goal_heights 는 vertical_scale 을 곱하지 않은 원시 단위로 돌려준다.
+    소비처(parkour_event._debug_vis_callback)가 vertical_scale 을 곱하기 때문이다.
+    (step 지형과 같은 규약. gap/hurdle 처럼 미터로 돌려주면 int16 캐스팅에서 0 이
+    되어 goal 마커가 바닥 높이에 찍힌다.)
+    """
+    mid_y = length_pixels // 2
+    dis_y_min = round(cfg.y_range[0] / cfg.horizontal_scale)
+    dis_y_max = round(cfg.y_range[1] / cfg.horizontal_scale)
+    platform_len = round(cfg.platform_len / cfg.horizontal_scale)
+    platform_height = round(cfg.platform_height / cfg.vertical_scale)
+
+    goals = np.zeros((num_goals, 2))
+    goal_heights = np.ones((num_goals)) * platform_height
+    goals[0] = [platform_len - 1, mid_y]
+
+    mid_goals_x = np.linspace(course_start, course_end, num_goals - 2)
+    for i, goal_x in enumerate(mid_goals_x):
+        rand_y = np.random.randint(dis_y_min, dis_y_max)
+        goal_y = int(np.clip(mid_y + rand_y, y_lo + 1, y_hi - 2))
+        goals[i + 1] = [goal_x, goal_y]
+        goal_heights[i + 1] = height_field_raw[int(round(goal_x)), goal_y]
+
+    final_dis_x = course_end + np.random.randint(
+        round(0.8 / cfg.horizontal_scale), round(1.5 / cfg.horizontal_scale)
+    )
+    final_dis_x = min(final_dis_x, width_pixels - round(0.5 / cfg.horizontal_scale))
+    goals[-1] = [final_dis_x, mid_y]
+    goal_heights[-1] = height_field_raw[int(final_dis_x), mid_y]
+    return goals, goal_heights
+
+
+def _course_span(cfg, width_pixels: int, length_pixels: int):
+    """사다리꼴 지형 공통: 시작 플랫폼과 코스 폭(y 구간)을 계산한다.
+
+    ``course_width`` (기본 5.0m) 가 타일 폭보다 넓으면 타일 전체 폭을 쓴다.
+    (현재 타일은 4m 폭이라 사실상 전폭 코스가 된다. 폭 5m 를 그대로 쓰려면
+    generator 의 size[1] 을 5.0 이상으로 키워야 한다.)
+    """
+    platform_len = round(cfg.platform_len / cfg.horizontal_scale)
+    mid_y = length_pixels // 2
+    half_w = round(min(cfg.course_width, cfg.size[1]) / cfg.horizontal_scale) // 2
+    y_lo = max(0, mid_y - half_w)
+    y_hi = min(length_pixels, mid_y + half_w)
+    return platform_len, mid_y, y_lo, y_hi
+
+
+@parkour_field_to_mesh
+def parkour_trapezoid_ramp_terrain(
+    difficulty: float,
+    cfg: extreme_parkour_terrains_cfg.ExtremeParkourTrapezoidRampTerrainCfg,
+    num_goals: int,
+    )->tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """옆에서 보면 사다리꼴인 경사로 지형: 오르막 - 평지 - 내리막.
+
+    - 경사 각도는 ``slope_angle`` (도 단위 difficulty 수식) 로 정하고,
+      오르막과 내리막의 기울기는 같다. 기본 '10 + 27*difficulty' 는 10행 커리큘럼
+      (difficulty = row/9) 에서 정확히 10, 13, ..., 37도가 된다.
+    - 평지(꼭대기) 길이와 높이는 ``plateau_len_range`` / ``plateau_height_range``
+      에서 랜덤으로 뽑는다. 각도가 스펙이므로, 완만한 각도에서 뽑힌 높이가
+      타일 길이를 넘치게 하면 각도를 유지한 채 높이를 낮춰서 맞춘다.
+    - 경사면은 slope_threshold(기본 1.5) 기준을 넘지 않아 (37도에서 픽셀당
+      0.075m < 0.15m) 직각화되지 않고 매끈한 램프로 렌더된다. roughness 노이즈가
+      경사면 위에 그대로 얹혀 발 디딤 랜덤화가 된다.
+    """
+    width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
+    length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
+    height_field_raw = np.zeros((width_pixels, length_pixels))
+
+    platform_len, mid_y, y_lo, y_hi = _course_span(cfg, width_pixels, length_pixels)
+    platform_height = round(cfg.platform_height / cfg.vertical_scale)
+    height_field_raw[0:platform_len, :] = platform_height
+
+    slope_deg = eval(cfg.slope_angle, {"difficulty": difficulty})
+    slope = np.tan(np.deg2rad(slope_deg))
+
+    plateau_len = round(np.random.uniform(*cfg.plateau_len_range) / cfg.horizontal_scale)
+    plateau_height_m = np.random.uniform(*cfg.plateau_height_range)
+
+    # 각도를 유지한 채 타일에 들어가도록 높이를 clamp 한다.
+    end_margin = round(cfg.end_margin / cfg.horizontal_scale)
+    avail = width_pixels - platform_len - plateau_len - end_margin
+    run_len = round(plateau_height_m / slope / cfg.horizontal_scale)
+    run_len = int(np.clip(run_len, 2, max(avail // 2, 2)))
+    plateau_height = round(run_len * cfg.horizontal_scale * slope / cfg.vertical_scale)
+
+    up_start = platform_len
+    up_end = up_start + run_len
+    down_start = up_end + plateau_len
+    down_end = down_start + run_len
+
+    # 오르막 / 평지 / 내리막 (내리막은 같은 기울기를 뒤집은 것).
+    # linspace(0, 높이, run_len) 는 픽셀 간 기울기가 h/(run_len-1) 이라 램프가 짧을수록
+    # (37도, 높이 0.4m 면 5픽셀) 실제 각도가 스펙보다 가팔라진다. 픽셀당 상승량을
+    # 정확히 tan(angle)*horizontal_scale 로 깔아 어떤 길이에서도 각도를 보존한다.
+    rise_per_px = cfg.horizontal_scale * slope / cfg.vertical_scale
+    ramp = np.rint(np.arange(1, run_len + 1) * rise_per_px)[:, None]
+    height_field_raw[up_start:up_end, y_lo:y_hi] = ramp
+    height_field_raw[up_end:down_start, y_lo:y_hi] = plateau_height
+    height_field_raw[down_start:down_end, y_lo:y_hi] = plateau_height - ramp
+
+    goals, goal_heights = _lay_goals_over_trapezoid(
+        cfg, height_field_raw, num_goals,
+        course_start=up_start + round(0.5 / cfg.horizontal_scale),
+        course_end=down_end,
+        width_pixels=width_pixels, length_pixels=length_pixels, y_lo=y_lo, y_hi=y_hi,
+    )
+
+    height_field_raw = padding_height_field_raw(height_field_raw, cfg)
+    if cfg.apply_roughness:
+        height_field_raw = random_uniform_terrain(difficulty, cfg, height_field_raw)
+    return height_field_raw, goals * cfg.horizontal_scale, goal_heights
+
+
+@parkour_field_to_mesh
+def parkour_trapezoid_stairs_terrain(
+    difficulty: float,
+    cfg: extreme_parkour_terrains_cfg.ExtremeParkourTrapezoidStairsTerrainCfg,
+    num_goals: int,
+    )->tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """사다리꼴 계단 지형: 계단 오르막 - 평지 - 계단 내리막.
+
+    - 단차(riser) 는 ``step_height`` (difficulty 수식) 로 정한다. 기본
+      '0.05 + 0.18*difficulty' 는 10행 커리큘럼에서 정확히 5, 7, ..., 23cm 가 된다.
+    - 단의 개수는 ``num_steps`` (기본 5개) 로 고정이고, 평지 높이는 자연히
+      num_steps * step_height 가 된다.
+    - 디딤판(tread) 깊이는 step 지형과 같은 방식으로 계단마다 ``x_range`` 에서
+      따로 뽑는다 (오르막/내리막 각각 독립 샘플). step 지형의 x_range (0.3, 1.5)
+      를 그대로 쓰면 왕복 10칸이 타일을 넘칠 수 있어 기본값을 (0.3, 0.8) 로 줄였다.
+    - 내리막도 같은 단차의 계단이다 (스펙에는 오르막만 명시돼 있지만, 사다리꼴
+      구조를 유지하려면 내려오는 쪽도 필요하다. 내리막을 경사로로 바꾸려면
+      이 함수에서 down 루프만 램프로 갈아끼우면 된다).
+    - slope_threshold 기본 0.3: 가장 낮은 단차 5cm 도 기준(0.03m)을 넘어
+      계단 면이 수직으로 선다. 기본값 1.5(기준 0.15m)면 23cm 를 빼고는 전부
+      경사로로 뭉개진다 (pyramid_stairs 와 같은 이유).
+    """
+    width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
+    length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
+    height_field_raw = np.zeros((width_pixels, length_pixels))
+
+    platform_len, mid_y, y_lo, y_hi = _course_span(cfg, width_pixels, length_pixels)
+    platform_height = round(cfg.platform_height / cfg.vertical_scale)
+    height_field_raw[0:platform_len, :] = platform_height
+
+    step_height = round(eval(cfg.step_height, {"difficulty": difficulty}) / cfg.vertical_scale)
+    dis_x_min = round(cfg.x_range[0] / cfg.horizontal_scale)
+    dis_x_max = round(cfg.x_range[1] / cfg.horizontal_scale)
+    plateau_len = round(np.random.uniform(*cfg.plateau_len_range) / cfg.horizontal_scale)
+
+    # 디딤판 깊이를 미리 다 뽑고, 넘치면 비율로 줄여 타일에 맞춘다.
+    end_margin = round(cfg.end_margin / cfg.horizontal_scale)
+    treads = np.random.randint(dis_x_min, dis_x_max, size=2 * cfg.num_steps)
+    avail = width_pixels - platform_len - plateau_len - end_margin
+    if treads.sum() > avail:
+        treads = np.maximum((treads * (avail / treads.sum())).astype(int), 2)
+
+    plateau_height = cfg.num_steps * step_height
+    dis_x = platform_len
+    # 오르막 계단: i번째 단의 윗면 높이는 (i+1)*step_height
+    for i in range(cfg.num_steps):
+        depth = treads[i]
+        height_field_raw[dis_x:dis_x + depth, y_lo:y_hi] = (i + 1) * step_height
+        dis_x += depth
+    up_end = dis_x
+    # 평지 (꼭대기)
+    height_field_raw[up_end:up_end + plateau_len, y_lo:y_hi] = plateau_height
+    dis_x = up_end + plateau_len
+    # 내리막 계단: 마지막 단에서 바닥(0)에 닿는다
+    for i in range(cfg.num_steps):
+        depth = treads[cfg.num_steps + i]
+        height_field_raw[dis_x:dis_x + depth, y_lo:y_hi] = plateau_height - (i + 1) * step_height
+        dis_x += depth
+    down_end = dis_x
+
+    goals, goal_heights = _lay_goals_over_trapezoid(
+        cfg, height_field_raw, num_goals,
+        course_start=platform_len + max(treads[0] // 2, 1),
+        course_end=down_end,
+        width_pixels=width_pixels, length_pixels=length_pixels, y_lo=y_lo, y_hi=y_hi,
+    )
+
+    height_field_raw = padding_height_field_raw(height_field_raw, cfg)
+    if cfg.apply_roughness:
+        height_field_raw = random_uniform_terrain(difficulty, cfg, height_field_raw)
+    return height_field_raw, goals * cfg.horizontal_scale, goal_heights
+
+
 def _lay_goals_along_corridor(
     cfg,
     height_field_raw: np.ndarray,

@@ -8,5 +8,7 @@ ExtremeParkourDemoTerrainCfg,
 ExtremeParkourPyramidStairsTerrainCfg,
 ExtremeParkourInvertedPyramidStairsTerrainCfg,
 ExtremeParkourDiscreteObstaclesTerrainCfg,
-ExtremeParkourRandomGridTerrainCfg
+ExtremeParkourRandomGridTerrainCfg,
+ExtremeParkourTrapezoidRampTerrainCfg,
+ExtremeParkourTrapezoidStairsTerrainCfg
 )

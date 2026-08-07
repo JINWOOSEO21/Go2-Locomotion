@@ -149,3 +149,67 @@ class ExtremeParkourRandomGridTerrainCfg(ExtremeParkourRoughTerrainCfg):
     grid_height_range: tuple[float, float] = (0.02, 0.10)
     """칸 높이 진폭의 (최소, 최대) (m). difficulty 로 보간한 값을 h 라 할 때
     각 칸의 윗면은 ``uniform(-h, +h)`` 다 (원본과 동일)."""
+
+@configclass
+class ExtremeParkourTrapezoidRampTerrainCfg(ExtremeParkourRoughTerrainCfg):
+    """옆에서 보면 사다리꼴인 경사로 지형: 오르막 램프 - 평지 - 내리막 램프.
+
+    오르막/내리막 기울기는 같고 ``slope_angle`` 로 정한다. 평지 길이/높이는
+    랜덤. 자세한 내용은 :func:`extreme_parkour_terrians.parkour_trapezoid_ramp_terrain` 참고.
+    """
+
+    function = extreme_parkour_terrians.parkour_trapezoid_ramp_terrain
+
+    slope_angle: str = '10 + 27*difficulty'
+    """경사 각도 (도). 10행 커리큘럼(difficulty = row/9)에서 10, 13, ..., 37도가 된다."""
+
+    course_width: float = 5.0
+    """구조물 폭 (m). 타일 폭(size[1])보다 크면 타일 전체 폭을 쓴다.
+    현재 타일이 4m 폭이라 사실상 전폭이다. 5m 를 그대로 쓰려면 generator 의
+    size 를 (x, 5.0) 이상으로 키워야 한다 (모든 지형에 영향)."""
+
+    plateau_len_range: tuple[float, float] = (1.5, 3.0)
+    """꼭대기 평지 길이의 랜덤 범위 (m)."""
+
+    plateau_height_range: tuple[float, float] = (0.4, 0.8)
+    """꼭대기 평지 높이의 랜덤 범위 (m). 완만한 각도에서 타일을 넘치면
+    각도를 유지한 채 높이를 낮춰 맞춘다 (10도, 높이 0.8m 일 때 램프 한쪽이
+    4.5m 라 16m 타일에 딱 들어가는 상한이다)."""
+
+    end_margin: float = 1.5
+    """내리막이 끝난 뒤 남겨둘 평지 길이 (m). 마지막 goal 이 이 안에 찍힌다."""
+
+@configclass
+class ExtremeParkourTrapezoidStairsTerrainCfg(ExtremeParkourRoughTerrainCfg):
+    """사다리꼴 계단 지형: 계단 오르막 - 평지 - 계단 내리막.
+
+    단차는 ``step_height``, 단 수는 ``num_steps`` 로 고정, 디딤판 깊이는 step 지형처럼
+    계단마다 ``x_range`` 에서 랜덤. 자세한 내용은
+    :func:`extreme_parkour_terrians.parkour_trapezoid_stairs_terrain` 참고.
+    """
+
+    function = extreme_parkour_terrians.parkour_trapezoid_stairs_terrain
+
+    step_height: str = '0.05 + 0.18*difficulty'
+    """단차 높이 (m). 10행 커리큘럼(difficulty = row/9)에서 5, 7, ..., 23cm 가 된다."""
+
+    num_steps: int = 5
+    """오르막 계단의 단 수 (내리막도 같은 수). 평지 높이 = num_steps * step_height."""
+
+    x_range: tuple[float, float] = (0.3, 0.8)
+    """디딤판(tread) 깊이의 랜덤 범위 (m). step 지형의 x_range(0.3, 1.5) 방식을
+    따르되, 왕복 10칸이 16m 타일을 넘치지 않도록 상한을 0.8 로 줄였다."""
+
+    course_width: float = 5.0
+    """구조물 폭 (m). ramp 쪽과 같은 의미."""
+
+    plateau_len_range: tuple[float, float] = (1.5, 3.0)
+    """꼭대기 평지 길이의 랜덤 범위 (m)."""
+
+    end_margin: float = 1.5
+    """내리막이 끝난 뒤 남겨둘 평지 길이 (m)."""
+
+    slope_threshold: float = 0.3
+    """계단 면을 수직으로 세우는 기준. 0.3 이면 기준 단차가 0.03m 라 가장 낮은
+    5cm 단도 직각이 된다. 기본값 1.5(기준 0.15m)를 쓰면 낮은 계단이 경사로로
+    뭉개진다 (pyramid_stairs 와 같은 이유)."""

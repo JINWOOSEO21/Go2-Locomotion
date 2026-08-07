@@ -124,6 +124,30 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
                         x_range=(1.5, 2.5),
                         slope_threshold=0.3,
                         ),
+        # 사다리꼴 경사로: 오르막(10~37도) - 평지 - 내리막. 오르막/내리막 기울기 동일.
+        # 10행 커리큘럼에서 각도가 정확히 10,13,...,37도가 되도록 slope_angle 을 잡았다.
+        # 평지 길이/높이는 랜덤 (완만한 각도에서 넘치면 각도 유지, 높이만 clamp).
+        "parkour_trapezoid_ramp": ExtremeParkourTrapezoidRampTerrainCfg(
+                        proportion=0.0,
+                        apply_roughness=True,
+                        slope_angle='10 + 27*difficulty',
+                        course_width=5.0,
+                        plateau_len_range=(1.5, 3.0),
+                        plateau_height_range=(0.4, 0.8),
+                        ),
+        # 사다리꼴 계단: 계단 오르막(5단) - 평지 - 계단 내리막(5단).
+        # 단차는 10행 커리큘럼에서 정확히 5,7,...,23cm. 디딤판 깊이는 step 지형처럼
+        # 계단마다 x_range 에서 랜덤. slope_threshold 는 계단 직각화를 위해 0.3.
+        "parkour_trapezoid_stairs": ExtremeParkourTrapezoidStairsTerrainCfg(
+                        proportion=0.0,
+                        apply_roughness=True,
+                        step_height='0.05 + 0.18*difficulty',
+                        num_steps=5,
+                        x_range=(0.3, 0.8),
+                        course_width=5.0,
+                        plateau_len_range=(1.5, 3.0),
+                        slope_threshold=0.3,
+                        ),
 
     },
 )
