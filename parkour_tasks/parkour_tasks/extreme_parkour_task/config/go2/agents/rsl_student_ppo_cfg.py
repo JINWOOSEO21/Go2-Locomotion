@@ -16,6 +16,12 @@ class UnitreeGo2ParkourStudentPPORunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
     save_interval = 100
     experiment_name = "unitree_go2_parkour"
     empirical_normalization = False
+    # 체크포인트를 logs/rsl_rl/unitree_go2_parkour/student_pretrained/model_99998.pt 로 고정한다.
+    # 기본값(load_run=".*", load_checkpoint="model_.*.pt")은 정규식이라 run 폴더 중 가장
+    # 최근 것 + 마지막 체크포인트를 집어 오므로, 학습 로그가 쌓이면 pretrained 대신 엉뚱한
+    # 모델이 로드된다. --load_run / --checkpoint 로 여전히 덮어쓸 수 있다.
+    load_run = "student_pretrained"
+    load_checkpoint = "model_99998.pt"
     policy = ParkourRslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_hidden_dims=[512, 256, 128],

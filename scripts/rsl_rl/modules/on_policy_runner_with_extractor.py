@@ -365,7 +365,9 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                 with torch.no_grad():
                     actions_teacher = self.alg.policy.act_inference(obs, hist_encoding=True, scandots_latent=None)
                     delta_yaw_ok_buffer.append(torch.nonzero(additional_obs["delta_yaw_ok"]).size(0) / additional_obs["delta_yaw_ok"].numel())
-                obs[additional_obs["delta_yaw_ok"], 6:8] = yaw.detach()[additional_obs["delta_yaw_ok"]]
+                # 관측은 (num_envs, 1) 로 오지만 여기서는 행 인덱싱용 1-D 마스크가 필요하다.
+                delta_yaw_ok_mask = additional_obs["delta_yaw_ok"].reshape(-1)
+                obs[delta_yaw_ok_mask, 6:8] = yaw.detach()[delta_yaw_ok_mask]
                 actions_student = self.alg.depth_actor(obs, hist_encoding=True, scandots_latent=depth_latent)
                 actions_buffer.append(actions_teacher.detach() - actions_student)
                 

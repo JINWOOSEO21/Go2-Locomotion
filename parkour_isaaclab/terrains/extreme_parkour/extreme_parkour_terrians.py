@@ -384,7 +384,302 @@ def parkour_demo_terrain(
     height_field_raw = padding_height_field_raw(height_field_raw,cfg)
     if cfg.apply_roughness:
         height_field_raw = random_uniform_terrain(difficulty, cfg, height_field_raw)
-    
+
     return height_field_raw, goals * cfg.horizontal_scale, goal_heights * cfg.vertical_scale
 
 
+@parkour_field_to_mesh
+def parkour_pyramid_stairs_terrain(
+    difficulty: float,
+    cfg: extreme_parkour_terrains_cfg.ExtremeParkourPyramidStairsTerrainCfg,
+    num_goals: int,
+    )->tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """IsaacLab 의 :func:`isaaclab.terrains.height_field.hf_terrains.pyramid_stairs_terrain`
+    (= ``HfPyramidStairsTerrainCfg`` / ``HfInvertedPyramidStairsTerrainCfg`` 가 쓰는 함수) 을
+    parkour 지형 규약에 맞춘 것.
+
+    ``cfg.inverted`` 가 True 면 안쪽으로 파 내려가는 구덩이(내려갔다 올라오기),
+    False 면 위로 쌓아 올린 피라미드(직각 계단을 올라갔다 내려오기)가 된다.
+    원본과 마찬가지로 계단 면은 slope_threshold 에 의해 수직으로 세워진다.
+
+    원본과 달라진 점은 네 가지다.
+
+    1. 시그니처. 원본은 ``(difficulty, cfg)`` 를 받아 높이맵만 돌려주지만, parkour
+       생성기는 ``cfg.function(difficulty, cfg, num_goals)`` 를 부르고
+       ``(mesh, origin, goals, goal_heights, x_edge_mask)`` 를 기대한다.
+       그래서 ``@height_field_to_mesh`` 대신 ``@parkour_field_to_mesh`` 를 쓴다.
+    2. 시작 플랫폼. 원본 피라미드는 타일 전체를 덮는다. 그런데 로봇은 타일 시작점에서
+       ``reset_root_state`` 의 offset(1.0m) 만큼 들어온 지점에 스폰되므로, 원본을 그대로
+       쓰면 이미 꼭짓점(구덩이 바닥 / 정상 평지) 한가운데서 시작해 계단을 볼 일이 없다.
+       여기서는 다른 parkour 지형과 똑같이 앞쪽 ``platform_len`` 을 평지로 남기고,
+       그 뒤 ``run_up_len`` 만큼 더 띄운 다음 ``pyramid_len`` 구간에만 피라미드를 만든다.
+    3. x/y 계단 폭 분리. 원본은 x, y 모두 ``step_width`` 씩 줄여 정사각 피라미드를 만든다.
+       parkour 타일은 4m 폭 × 24m 길이의 복도라 같은 폭으로 줄이면 y 가 먼저 바닥나
+       "짧은 계단 + 아주 긴 평평한 바닥" 이 되어버린다. ``step_depth`` 로 x 방향
+       감소폭을 따로 주면, x/y 가 동시에 닫혀 바닥이 ``apex_width`` 정사각형인
+       진짜 피라미드가 되고 디딤판(tread)도 로봇이 밟기 좋은 깊이가 된다.
+       ``step_depth=None`` 이면 원본과 동일하게 ``step_width`` 를 쓴다.
+    4. goal / 거칠기. 코스를 따라 8개 goal 을 깔고 각 goal 의 높이를 높이맵에서 읽는다.
+       다른 지형과 마찬가지로 ``apply_roughness`` 노이즈와 테두리 패딩도 적용한다.
+
+    계단 한 칸의 높이 계산과 링을 안쪽으로 줄여가는 루프 자체는 원본 그대로다.
+    """
+    width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
+    length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
+    height_field_raw = np.zeros((width_pixels, length_pixels))
+    mid_y = length_pixels // 2  # length is actually y width
+
+    # -- 계단 파라미터 (원본과 동일). inverted 면 부호를 뒤집어 구덩이가 된다.
+    step_height = cfg.step_height_range[0] + difficulty * (cfg.step_height_range[1] - cfg.step_height_range[0])
+    if cfg.inverted:
+        step_height *= -1
+    step_height = round(step_height / cfg.vertical_scale)
+    step_width = round(cfg.step_width / cfg.horizontal_scale)
+    step_depth = round((cfg.step_depth if cfg.step_depth is not None else cfg.step_width) / cfg.horizontal_scale)
+    apex_width = round(cfg.apex_width / cfg.horizontal_scale)
+    if step_width < 1 or step_depth < 1:
+        # 0 이면 아래 루프가 영원히 돌아간다. horizontal_scale 보다 작은 계단은 만들 수 없다.
+        raise ValueError(
+            f"step_width({cfg.step_width}) / step_depth({cfg.step_depth}) 는 "
+            f"horizontal_scale({cfg.horizontal_scale}) 이상이어야 한다."
+        )
+
+    # -- 시작 플랫폼 (로봇 스폰 지점)
+    platform_len = round(cfg.platform_len / cfg.horizontal_scale)
+    platform_height = round(cfg.platform_height / cfg.vertical_scale)
+    height_field_raw[0:platform_len, :] = platform_height
+
+    # -- 피라미드가 차지할 x 구간
+    run_up = round(cfg.run_up_len / cfg.horizontal_scale)
+    pyr_start = platform_len + run_up
+    pyr_stop = min(pyr_start + round(cfg.pyramid_len / cfg.horizontal_scale), width_pixels)
+
+    # 원본 루프. x 는 step_depth, y 는 step_width 씩 안쪽으로 줄이며 한 칸씩 파 내려간다.
+    start_x, stop_x = pyr_start, pyr_stop
+    start_y, stop_y = 0, length_pixels
+    current_step_height = 0
+    while (stop_x - start_x) > apex_width and (stop_y - start_y) > apex_width:
+        # increment position
+        start_x += step_depth
+        stop_x -= step_depth
+        start_y += step_width
+        stop_y -= step_width
+        # increment height
+        current_step_height += step_height
+        # add the step
+        height_field_raw[start_x:stop_x, start_y:stop_y] = current_step_height
+
+    # -- goals: 시작 플랫폼 끝 -> 피라미드 진입/바닥/탈출 -> 빠져나온 평지
+    goals = np.zeros((num_goals, 2))
+    goal_heights = np.zeros((num_goals))
+    goals[0] = [platform_len - 1, mid_y]
+    goal_heights[0] = platform_height
+    # 계단 수는 난이도/크기에 따라 달라지므로 중간 goal 은 등간격으로 깐다.
+    # 그래야 계단이 몇 칸이든 내려가기-바닥-올라오기가 고르게 커버된다.
+    mid_goals_x = np.linspace(pyr_start + step_depth * 0.5, pyr_stop - step_depth * 0.5, num_goals - 2)
+    for i, goal_x in enumerate(mid_goals_x):
+        goals[i + 1] = [goal_x, mid_y]
+        goal_heights[i + 1] = height_field_raw[int(round(goal_x)), mid_y]
+    final_dis_x = pyr_stop + run_up
+    if final_dis_x > width_pixels:
+        final_dis_x = width_pixels - 0.5 // cfg.horizontal_scale
+    goals[-1] = [final_dis_x, mid_y]
+    goal_heights[-1] = platform_height
+
+    height_field_raw = padding_height_field_raw(height_field_raw, cfg)
+    if cfg.apply_roughness:
+        height_field_raw = random_uniform_terrain(difficulty, cfg, height_field_raw)
+
+    return height_field_raw, goals * cfg.horizontal_scale, goal_heights * cfg.vertical_scale
+
+
+def _lay_goals_along_corridor(
+    cfg,
+    height_field_raw: np.ndarray,
+    num_goals: int,
+    width_pixels: int,
+    length_pixels: int,
+    clear_half: int = 0,
+    ):
+    """지물이 균질하게 흩어진 지형용 goal 배치.
+
+    gap/hurdle 처럼 ``x_range`` / ``y_range`` 에서 간격을 뽑아 코스를 따라 goal 을 깐다.
+    ``clear_half`` 가 0 보다 크면 각 goal 둘레 (2*clear_half+1) 픽셀을 평지로 밀어
+    로봇이 디딜 자리를 만든다 (goal 이 기둥 위나 구덩이 속에 찍히는 것을 막는다).
+
+    height_field_raw 를 제자리에서 수정하고 (goals, goal_heights) 를 돌려준다.
+    """
+    mid_y = length_pixels // 2
+    dis_x_min = round(cfg.x_range[0] / cfg.horizontal_scale)
+    dis_x_max = round(cfg.x_range[1] / cfg.horizontal_scale)
+    dis_y_min = round(cfg.y_range[0] / cfg.horizontal_scale)
+    dis_y_max = round(cfg.y_range[1] / cfg.horizontal_scale)
+
+    platform_len = round(cfg.platform_len / cfg.horizontal_scale)
+    platform_height = round(cfg.platform_height / cfg.vertical_scale)
+
+    goals = np.zeros((num_goals, 2))
+    goal_heights = np.zeros((num_goals))
+    goals[0] = [platform_len - 1, mid_y]
+    goal_heights[0] = platform_height
+
+    dis_x = platform_len
+    for i in range(num_goals - 1):
+        if i == num_goals - 2:
+            # 마지막 goal 은 코스를 완전히 빠져나온 지점
+            dis_x += np.random.randint(dis_x_min, dis_x_max)
+            goal_x = min(dis_x, width_pixels - 1)
+            goal_y = mid_y
+        else:
+            rand_x = np.random.randint(dis_x_min, dis_x_max)
+            rand_y = np.random.randint(dis_y_min, dis_y_max)
+            dis_x += rand_x
+            goal_x = min(dis_x - rand_x // 2, width_pixels - 1)
+            goal_y = int(np.clip(mid_y + rand_y, 0, length_pixels - 1))
+        if clear_half > 0:
+            x0, x1 = max(0, goal_x - clear_half), min(width_pixels, goal_x + clear_half + 1)
+            y0, y1 = max(0, goal_y - clear_half), min(length_pixels, goal_y + clear_half + 1)
+            height_field_raw[x0:x1, y0:y1] = platform_height
+        goals[i + 1] = [goal_x, goal_y]
+        goal_heights[i + 1] = height_field_raw[int(goal_x), int(goal_y)]
+
+    return goals, goal_heights
+
+
+@parkour_field_to_mesh
+def parkour_discrete_obstacles_terrain(
+    difficulty: float,
+    cfg: extreme_parkour_terrains_cfg.ExtremeParkourDiscreteObstaclesTerrainCfg,
+    num_goals: int,
+    )->tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """IsaacLab 의 :func:`isaaclab.terrains.height_field.hf_terrains.discrete_obstacles_terrain`
+    (= ``HfDiscreteObstaclesTerrainCfg`` 가 쓰는 함수) 을 parkour 지형 규약에 맞춘 것.
+
+    장애물 하나를 뽑는 절차 — 높이를 ``choice`` 면 ``[-h, -h/2, h/2, h]`` 에서 고르고,
+    폭/길이를 4픽셀 간격 격자에서 고르고, 시작 위치도 4픽셀 격자에서 고른 뒤 지형 밖으로
+    나가면 안쪽으로 당기는 — 은 원본 그대로다. 달라진 점은 세 가지다.
+
+    1. 시그니처/데코레이터. 다른 이식 지형과 같은 이유로 ``@parkour_field_to_mesh`` 를 쓰고
+       ``(difficulty, cfg, num_goals)`` 를 받아 goal 까지 돌려준다.
+    2. 평지로 비우는 위치. 원본은 '타일 한가운데' 정사각형만 비운다. parkour 타일에서는
+       로봇이 타일 시작점 1.0m 지점에 스폰하므로 한가운데를 비워봐야 소용이 없다.
+       여기서는 앞쪽 ``platform_len`` 전체를 시작 플랫폼으로 비운다.
+    3. goal 자리 확보. 원본에는 goal 개념이 없어 장애물이 어디 놓이든 상관없지만, parkour
+       에서는 goal 이 기둥 꼭대기나 구덩이 바닥에 찍히면 로봇이 도달할 수 없어 태스크가
+       깨진다. goal 둘레 ``goal_clear_width`` 만큼을 평지로 밀어 디딜 자리를 만든다.
+       (장애물 사이를 헤집고 지나가는 성격은 그대로 남는다.)
+    """
+    width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
+    length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
+
+    # -- 원본과 동일한 파라미터 해석
+    obs_height = cfg.obstacle_height_range[0] + difficulty * (
+        cfg.obstacle_height_range[1] - cfg.obstacle_height_range[0]
+    )
+    obs_height = int(obs_height / cfg.vertical_scale)
+    obs_width_min = int(cfg.obstacle_width_range[0] / cfg.horizontal_scale)
+    obs_width_max = int(cfg.obstacle_width_range[1] / cfg.horizontal_scale)
+
+    obs_width_range = np.arange(obs_width_min, obs_width_max, 4)
+    obs_length_range = np.arange(obs_width_min, obs_width_max, 4)
+    if len(obs_width_range) == 0 or len(obs_length_range) == 0:
+        raise ValueError(
+            f"obstacle_width_range({cfg.obstacle_width_range}) 가 horizontal_scale"
+            f"({cfg.horizontal_scale}) 기준 4픽셀 격자를 하나도 못 만든다. 범위를 넓혀라."
+        )
+    obs_x_range = np.arange(0, width_pixels, 4)
+    obs_y_range = np.arange(0, length_pixels, 4)
+
+    height_field_raw = np.zeros((width_pixels, length_pixels))
+    for _ in range(cfg.num_obstacles):
+        if cfg.obstacle_height_mode == "choice":
+            height = np.random.choice([-obs_height, -obs_height // 2, obs_height // 2, obs_height])
+        elif cfg.obstacle_height_mode == "fixed":
+            height = obs_height
+        else:
+            raise ValueError(
+                f"Unknown obstacle height mode '{cfg.obstacle_height_mode}'. Must be 'choice' or 'fixed'."
+            )
+        width = int(np.random.choice(obs_width_range))
+        length = int(np.random.choice(obs_length_range))
+        x_start = int(np.random.choice(obs_x_range))
+        y_start = int(np.random.choice(obs_y_range))
+        if x_start + width > width_pixels:
+            x_start = width_pixels - width
+        if y_start + length > length_pixels:
+            y_start = length_pixels - length
+        height_field_raw[x_start : x_start + width, y_start : y_start + length] = height
+
+    # -- 시작 플랫폼 (원본의 '가운데 비우기' 대신)
+    platform_len = round(cfg.platform_len / cfg.horizontal_scale)
+    platform_height = round(cfg.platform_height / cfg.vertical_scale)
+    height_field_raw[0:platform_len, :] = platform_height
+
+    clear_half = max(0, round(cfg.goal_clear_width / cfg.horizontal_scale) // 2)
+    goals, goal_heights = _lay_goals_along_corridor(
+        cfg, height_field_raw, num_goals, width_pixels, length_pixels, clear_half=clear_half
+    )
+
+    height_field_raw = padding_height_field_raw(height_field_raw, cfg)
+    if cfg.apply_roughness:
+        height_field_raw = random_uniform_terrain(difficulty, cfg, height_field_raw)
+
+    return height_field_raw, goals * cfg.horizontal_scale, goal_heights * cfg.vertical_scale
+
+
+@parkour_field_to_mesh
+def parkour_random_grid_terrain(
+    difficulty: float,
+    cfg: extreme_parkour_terrains_cfg.ExtremeParkourRandomGridTerrainCfg,
+    num_goals: int,
+    )->tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """IsaacLab 의 :func:`isaaclab.terrains.trimesh.mesh_terrains.random_grid_terrain`
+    (= ``MeshRandomGridTerrainCfg`` 가 쓰는 함수) 을 parkour 지형 규약에 맞춘 것.
+
+    격자 칸마다 윗면 높이를 ``uniform(-grid_height, +grid_height)`` 로 뽑아 평평한 사각
+    타일을 깔고, 칸 경계는 수직으로 떨어지는 — 그 성격은 원본 그대로다.
+    달라진 점은 네 가지다.
+
+    1. 표현 방식. 원본은 trimesh 지형이라 칸마다 상자를 만들어 붙이고
+       ``(meshes, origin)`` 만 돌려준다. parkour 생성기는 높이맵 기반
+       ``@parkour_field_to_mesh`` 를 거쳐 mesh 와 함께 ``x_edge_mask`` (발이 모서리를
+       밟았는지 판정하는 마스크) 를 만들어야 하는데, 이건 높이맵이 있어야 계산된다.
+       그래서 같은 '칸별 랜덤 높이' 를 높이맵으로 구현했다. 칸 경계가 한 픽셀에서
+       수직으로 꺾이므로 slope_threshold 를 거치면 원본과 같은 직각 단차가 된다.
+    2. 정사각 제한. 원본은 ``if cfg.size[0] != cfg.size[1]: raise ValueError`` 로 정사각
+       타일만 받는다. parkour 타일은 24m x 4m 복도라 그대로는 아예 생성이 거부된다.
+       높이맵 방식에는 그런 제약이 없어 그냥 직사각형 타일을 채운다.
+    3. 시작 플랫폼. 원본은 타일 한가운데에 평지 플랫폼을 놓지만, 여기서는 다른 parkour
+       지형과 같이 앞쪽 ``platform_len`` 을 평지로 남긴다 (로봇 스폰 지점).
+    4. goal. 코스를 따라 8개를 깔고 각 goal 높이를 높이맵에서 읽는다. 칸 자체가 평평해서
+       goal 이 칸 위에 찍히면 그대로 디딜 수 있으므로 따로 비우지 않는다.
+    """
+    width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
+    length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
+
+    # -- 원본과 동일: 난이도로 칸 높이 진폭을 정한다
+    grid_height = cfg.grid_height_range[0] + difficulty * (cfg.grid_height_range[1] - cfg.grid_height_range[0])
+    grid_height = grid_height / cfg.vertical_scale
+    grid_width = max(1, round(cfg.grid_width / cfg.horizontal_scale))
+
+    num_cells_x = int(np.ceil(width_pixels / grid_width))
+    num_cells_y = int(np.ceil(length_pixels / grid_width))
+    # 칸마다 하나의 높이를 뽑아 픽셀로 펼친다 (원본의 h_noise.uniform_(-grid_height, grid_height))
+    cell_heights = np.random.uniform(-grid_height, grid_height, size=(num_cells_x, num_cells_y))
+    height_field_raw = np.repeat(np.repeat(cell_heights, grid_width, axis=0), grid_width, axis=1)
+    height_field_raw = np.rint(height_field_raw[:width_pixels, :length_pixels])
+
+    # -- 시작 플랫폼
+    platform_len = round(cfg.platform_len / cfg.horizontal_scale)
+    platform_height = round(cfg.platform_height / cfg.vertical_scale)
+    height_field_raw[0:platform_len, :] = platform_height
+
+    goals, goal_heights = _lay_goals_along_corridor(
+        cfg, height_field_raw, num_goals, width_pixels, length_pixels, clear_half=0
+    )
+
+    height_field_raw = padding_height_field_raw(height_field_raw, cfg)
+    if cfg.apply_roughness:
+        height_field_raw = random_uniform_terrain(difficulty, cfg, height_field_raw)
+
+    return height_field_raw, goals * cfg.horizontal_scale, goal_heights * cfg.vertical_scale

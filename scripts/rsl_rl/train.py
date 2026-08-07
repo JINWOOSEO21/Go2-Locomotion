@@ -71,6 +71,7 @@ if args_cli.distributed and version.parse(installed_version) < version.parse(RSL
 
 import gymnasium as gym
 import os
+import pickle
 import torch
 from datetime import datetime
 
@@ -84,7 +85,7 @@ from isaaclab.envs import (
     multi_agent_to_single_agent,
 )
 from isaaclab.utils.dict import print_dict
-from isaaclab.utils.io import dump_pickle, dump_yaml
+from isaaclab.utils.io import dump_yaml
 from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
 from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
 # import isaaclab_tasks  # noqa: F401
@@ -110,6 +111,13 @@ def main(env_cfg: ParkourManagerBasedRLEnv |ManagerBasedRLEnvCfg | DirectRLEnvCf
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+    # student 씬의 record_camera(TiledCamera)는 play_multicam.py/demo.py 녹화 전용이다.
+    # 학습에서는 이 카메라의 프레임을 읽는 곳이 없는데도, 씬에 있으면 --enable_cameras
+    # 없이는 스폰 단계에서 RuntimeError 가 나고, 켜면 env 수만큼 960x540 렌더가
+    # 매 스텝 돌아가 VRAM 과 속도를 잡아먹는다. 학습 경로에서는 항상 떼어낸다.
+    # (--video 녹화는 뷰포트(render_mode="rgb_array")를 쓰므로 이 카메라와 무관하다.)
+    if getattr(env_cfg.scene, "record_camera", None) is not None:
+        env_cfg.scene.record_camera = None
     agent_cfg.max_iterations = (
         args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
     )
@@ -179,8 +187,13 @@ def main(env_cfg: ParkourManagerBasedRLEnv |ManagerBasedRLEnvCfg | DirectRLEnvCf
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
-    dump_pickle(os.path.join(log_dir, "params", "env.pkl"), env_cfg)
-    dump_pickle(os.path.join(log_dir, "params", "agent.pkl"), agent_cfg)
+    # isaaclab.utils.io.dump_pickle 는 IsaacLab 2.3 에서 제거됨 (upstream 도 pickle 덤프를 뺐다).
+    # 이 pkl 은 repo 안에서 다시 읽지 않으므로 표준 pickle 로 그대로 남겨둔다.
+    for _name, _cfg in (("env", env_cfg), ("agent", agent_cfg)):
+        _path = os.path.join(log_dir, "params", f"{_name}.pkl")
+        os.makedirs(os.path.dirname(_path), exist_ok=True)
+        with open(_path, "wb") as _f:
+            pickle.dump(_cfg, _f)
 
     # # # run training
     runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
