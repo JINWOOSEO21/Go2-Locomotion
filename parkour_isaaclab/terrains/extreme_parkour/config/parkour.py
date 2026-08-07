@@ -8,6 +8,19 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
     num_cols=40,
     horizontal_scale=0.08, ## original scale is 0.05, But Computing issue in IsaacLab see this issue in https://github.com/isaac-sim/IsaacLab/issues/2187
     vertical_scale=0.005,
+    # 높이맵을 메쉬로 바꿀 때 '한 픽셀 사이 단차를 수직 벽으로 세울지' 를 정하는
+    # 기울기(rise/run) 기준. horizontal_scale 0.08 에서는 단차 0.12m 초과분만
+    # 수직이 되고, 그보다 낮은 단차는 가로 0.08m 짜리 비탈로 렌더된다.
+    # x_edge_mask(발이 모서리를 밟았는지 판정) 도 '수직으로 세운 픽셀' 목록이라
+    # 이 값이 곧 edge 로 인정되는 최소 단차다.
+    #
+    # 주의: 이 값은 지형 전체에 공통으로 적용된다. IsaacLab TerrainGenerator.__init__
+    # 이 모든 sub_terrain 의 slope_threshold 를 여기 값으로 덮어쓰기 때문에
+    # (isaaclab/terrains/terrain_generator.py 의 sub_cfg.slope_threshold 대입),
+    # sub_terrains 쪽에 따로 적어도 효과가 없다.
+    # 낮추면 낮은 계단이 직각이 되지만 roughness 노이즈(픽셀당 최대 6cm)까지
+    # 기준을 넘겨 램프/평지가 통째로 미세계단 + edge 로 뭉개진다. 실측: 0.3 에서
+    # trapezoid_ramp 의 edge 픽셀이 9 -> 2846 으로 폭증했다.
     slope_threshold=1.5,
     difficulty_range=(0.0, 1.0),
     use_cache=False,
@@ -73,18 +86,12 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
                         pyramid_len=8.0,
                         run_up_len=1.5,
                         ),
-        # 같은 함수의 inverted=False 판. 구덩이로 내려가는 대신 직각 계단을 올라갔다
+        # 같은 함수의 inverted=False 판. 구덩이로 내려가는 대신 계단을 올라갔다
         # 내려온다. 올라가는 쪽이 더 힘드므로 계단 한 칸을 조금 낮게 잡았다
         # (난이도 1.0 에서 4칸 x 0.16 = 0.64m 상승).
         #
-        # slope_threshold 를 반드시 낮춰야 '직각' 계단이 된다.
-        # convert_height_field_to_mesh 는 한 픽셀 사이 높이차가
-        #   slope_threshold * horizontal_scale / vertical_scale
-        # 를 넘을 때만 그 면을 수직으로 세운다. 기본값 1.5 + horizontal_scale 0.1 이면
-        # 0.15m 를 넘는 단차만 직각이 되고, 그보다 낮은 계단은 폭 0.1m 짜리 경사로로
-        # 렌더된다(실측: 난이도 0.7 에서 x_edge_mask 가 13픽셀밖에 안 잡혔다).
-        # 0.3 이면 기준이 0.03m 라 어느 난이도에서든 계단 면이 수직이 된다.
-        # roughness 노이즈는 ±0.02m 라 이 기준에 걸리지 않는다.
+        # 단차가 generator 의 slope_threshold 기준(0.08 스케일에서 0.12m)보다 낮은
+        # 난이도 구간에서는 계단 면이 수직으로 서지 않고 x_edge_mask 도 안 생긴다.
         "parkour_pyramid_stairs_up": ExtremeParkourPyramidStairsTerrainCfg(
                         proportion=0.0,
                         apply_roughness=True,
@@ -94,7 +101,6 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
                         apex_width=1.6,
                         pyramid_len=8.0,
                         run_up_len=1.5,
-                        slope_threshold=0.3,
                         ),
         # IsaacLab HfDiscreteObstaclesTerrainCfg 를 parkour 규약에 맞춘 지형.
         # x_range 는 goal 간격이다. 7구간 * 최대 2.5m + 플랫폼 2.5m = 20m 로 24m 타일에 들어간다.
@@ -113,16 +119,15 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
         # 덧씌우면 그 평평함이 사라진다.
         # grid_height_range 는 원본 프리셋과 같은 (0.02, 0.10) 을 쓴다.
         #
-        # slope_threshold 는 위 계단과 같은 이유로 낮춘다. 원본은 상자를 쌓아 만들어
-        # 칸 옆면이 항상 수직인데, 기본값 1.5 로 두면 칸 경계 대부분이 0.15m 를 못 넘어
-        # 경사로가 되어버린다(실측: 난이도 0.7 에서 x_edge_mask 가 0픽셀이었다).
+        # 원본은 상자를 쌓아 만들어 칸 옆면이 항상 수직이지만, 여기서는 높이맵을
+        # 거치므로 칸 경계 높이차가 generator 의 slope_threshold 기준(0.08 스케일에서
+        # 0.12m)을 넘지 못해 수직 벽도 x_edge_mask 도 생기지 않는다.
         "parkour_random_grid": ExtremeParkourRandomGridTerrainCfg(
                         proportion=0.0,
                         apply_roughness=False,
                         grid_width=0.5,
                         grid_height_range=(0.02, 0.10),
                         x_range=(1.5, 2.5),
-                        slope_threshold=0.3,
                         ),
         # 사다리꼴 경사로: 오르막(10~37도) - 평지 - 내리막. 오르막/내리막 기울기 동일.
         # 10행 커리큘럼에서 각도가 정확히 10,13,...,37도가 되도록 slope_angle 을 잡았다.
@@ -137,7 +142,12 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
                         ),
         # 사다리꼴 계단: 계단 오르막 - 평지 - 계단 내리막 (단 수는 타일마다 3~7개 랜덤).
         # 단차는 10행 커리큘럼에서 정확히 5,7,...,23cm. 디딤판 깊이는 step 지형처럼
-        # 계단마다 x_range 에서 랜덤. slope_threshold 는 계단 직각화를 위해 0.3.
+        # 계단마다 x_range 에서 랜덤.
+        #
+        # generator 의 slope_threshold(0.08 스케일에서 0.12m) 때문에 단차가 그보다
+        # 낮은 row 0~3 은 계단 면이 수직으로 서지 않고 x_edge_mask 도 비어 있다.
+        # reward_feet_edge 가 terrain_levels > 3 에서만 켜지므로 실제 리워드에는
+        # 영향이 없다 (실측 edge 픽셀: row3=89, row4=232, row6=543).
         "parkour_trapezoid_stairs": ExtremeParkourTrapezoidStairsTerrainCfg(
                         proportion=0.0,
                         apply_roughness=True,
@@ -146,7 +156,6 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
                         x_range=(0.3, 0.8),
                         course_width_range=(2.0, 4.0),
                         plateau_len_range=(1.5, 3.0),
-                        slope_threshold=0.3,
                         ),
 
     },

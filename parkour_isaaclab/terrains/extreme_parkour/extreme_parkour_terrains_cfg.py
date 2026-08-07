@@ -212,7 +212,3 @@ class ExtremeParkourTrapezoidStairsTerrainCfg(ExtremeParkourRoughTerrainCfg):
     end_margin: float = 1.5
     """내리막이 끝난 뒤 남겨둘 평지 길이 (m)."""
 
-    slope_threshold: float = 0.3
-    """계단 면을 수직으로 세우는 기준. 0.3 이면 기준 단차가 0.03m 라 가장 낮은
-    5cm 단도 직각이 된다. 기본값 1.5(기준 0.15m)를 쓰면 낮은 계단이 경사로로
-    뭉개진다 (pyramid_stairs 와 같은 이유)."""

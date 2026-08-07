@@ -400,7 +400,9 @@ def parkour_pyramid_stairs_terrain(
 
     ``cfg.inverted`` 가 True 면 안쪽으로 파 내려가는 구덩이(내려갔다 올라오기),
     False 면 위로 쌓아 올린 피라미드(직각 계단을 올라갔다 내려오기)가 된다.
-    원본과 마찬가지로 계단 면은 slope_threshold 에 의해 수직으로 세워진다.
+    계단 면이 수직으로 서는지는 generator 의 slope_threshold 가 정한다. 기본 1.5 +
+    horizontal_scale 0.08 이면 단차 0.12m 초과분만 직각이 되고, 그보다 낮은 단은
+    비탈로 렌더되며 x_edge_mask 도 생기지 않는다.
 
     원본과 달라진 점은 네 가지다.
 
@@ -644,9 +646,11 @@ def parkour_trapezoid_stairs_terrain(
     - 내리막도 같은 단차의 계단이다 (스펙에는 오르막만 명시돼 있지만, 사다리꼴
       구조를 유지하려면 내려오는 쪽도 필요하다. 내리막을 경사로로 바꾸려면
       이 함수에서 down 루프만 램프로 갈아끼우면 된다).
-    - slope_threshold 기본 0.3: 가장 낮은 단차 5cm 도 기준(0.03m)을 넘어
-      계단 면이 수직으로 선다. 기본값 1.5(기준 0.15m)면 23cm 를 빼고는 전부
-      경사로로 뭉개진다 (pyramid_stairs 와 같은 이유).
+    - 계단 면이 수직으로 서는지는 generator 의 slope_threshold 가 정한다 (지형별로
+      따로 못 정한다. IsaacLab TerrainGenerator 가 sub_terrain 값을 덮어쓴다).
+      기본 1.5 + horizontal_scale 0.08 이면 기준이 0.12m 라, 단차가 그보다 낮은
+      난이도 구간에서는 계단 면이 가로 0.08m 짜리 비탈이 되고 x_edge_mask 도
+      비어 있다.
     """
     width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
     length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
@@ -851,8 +855,10 @@ def parkour_random_grid_terrain(
        ``(meshes, origin)`` 만 돌려준다. parkour 생성기는 높이맵 기반
        ``@parkour_field_to_mesh`` 를 거쳐 mesh 와 함께 ``x_edge_mask`` (발이 모서리를
        밟았는지 판정하는 마스크) 를 만들어야 하는데, 이건 높이맵이 있어야 계산된다.
-       그래서 같은 '칸별 랜덤 높이' 를 높이맵으로 구현했다. 칸 경계가 한 픽셀에서
-       수직으로 꺾이므로 slope_threshold 를 거치면 원본과 같은 직각 단차가 된다.
+       그래서 같은 '칸별 랜덤 높이' 를 높이맵으로 구현했다. 다만 칸 경계가 실제로
+       수직 벽이 되는지는 generator 의 slope_threshold 가 정한다. 기본 1.5 +
+       horizontal_scale 0.08 이면 기준이 0.12m 라, grid_height_range 를 그 위로
+       올리지 않는 한 칸 경계는 비탈이 되고 x_edge_mask 도 비어 있다.
     2. 정사각 제한. 원본은 ``if cfg.size[0] != cfg.size[1]: raise ValueError`` 로 정사각
        타일만 받는다. parkour 타일은 24m x 4m 복도라 그대로는 아예 생성이 거부된다.
        높이맵 방식에는 그런 제약이 없어 그냥 직사각형 타일을 채운다.

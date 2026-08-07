@@ -25,28 +25,59 @@ class reward_feet_edge(ManagerTermBase):
         self.asset_cfg = cfg.params["asset_cfg"]
         self.parkour_event: ParkourEvent =  env.parkour_manager.get_term(cfg.params["parkour_name"])
         self.body_id = self.contact_sensor.find_bodies('base')[0]
-        self.horizontal_scale = env.scene.terrain.cfg.terrain_generator.horizontal_scale
-        size_x, size_y = env.scene.terrain.cfg.terrain_generator.size
-        self.rows_offset = (size_x * env.scene.terrain.cfg.terrain_generator.num_rows/2)
-        self.cols_offset = (size_y * env.scene.terrain.cfg.terrain_generator.num_cols/2)
+        generator_cfg = env.scene.terrain.cfg.terrain_generator
+        self.horizontal_scale = generator_cfg.horizontal_scale
+        self.tile_size_x, self.tile_size_y = generator_cfg.size
+        self.num_rows, self.num_cols = generator_cfg.num_rows, generator_cfg.num_cols
+        self.rows_offset = (self.tile_size_x * self.num_rows/2)
+        self.cols_offset = (self.tile_size_y * self.num_cols/2)
+        # 타일 하나가 x_edge_maskes 에서 차지하는 픽셀 수. 높이맵은 칸이 아니라
+        # 격자점을 저장하므로 (칸 수 + 1) 이고, 따라서 타일의 물리 길이를
+        # horizontal_scale 로 나눈 값보다 정확히 1 크다. 아래에서 이어 붙인
+        # 이미지도 이 폭으로 타일을 나열하므로, 월드 좌표를 그냥
+        # horizontal_scale 로 나눈 값을 인덱스로 쓰면 행/열마다 1픽셀씩 밀린다
+        # (16m x 4m 타일 / hs 0.08 기준 최대 x 0.72m, y 3.12m).
+        self.tile_width_pixels = int(self.tile_size_x / self.horizontal_scale) + 1
+        self.tile_length_pixels = int(self.tile_size_y / self.horizontal_scale) + 1
         total_x_edge_maskes = torch.from_numpy(self.parkour_event.terrain.terrain_generator_class.x_edge_maskes).to(device = self.device)
         self.x_edge_masks_tensor = total_x_edge_maskes.permute(0, 2, 1, 3).reshape(
             env.scene.terrain.terrain_generator_class.total_width_pixels, env.scene.terrain.terrain_generator_class.total_length_pixels
         )
 
+    def _to_mask_index(
+        self,
+        pos: torch.Tensor,
+        tile_size: float,
+        num_tiles: int,
+        tile_pixels: int,
+        ) -> torch.Tensor:
+        """지형 좌하단 기준 좌표(m) -> 이어 붙인 edge mask 이미지의 픽셀 인덱스.
+
+        타일 인덱스를 먼저 구하고 타일 내부 픽셀을 더한다. 물리 간격(tile_size /
+        horizontal_scale 픽셀)이 아니라 실제 저장 폭(tile_pixels)으로 타일을
+        건너뛰어야 마스크가 어긋나지 않는다.
+        """
+        tile = torch.div(pos, tile_size, rounding_mode="floor").long()
+        tile = torch.clip(tile, 0, num_tiles - 1)
+        local = ((pos - tile * tile_size) / self.horizontal_scale).round().long()
+        local = torch.clip(local, 0, tile_pixels - 1)
+        return tile * tile_pixels + local
+
     def __call__(
         self,
-        env: ParkourManagerBasedRLEnv,        
+        env: ParkourManagerBasedRLEnv,
         asset_cfg: SceneEntityCfg,
         sensor_cfg: SceneEntityCfg,
         parkour_name: str,
         ) -> torch.Tensor:
-        feet_pos_x = ((self.asset.data.body_state_w[:, self.asset_cfg.body_ids ,0] + self.rows_offset)
-                      /self.horizontal_scale).round().long() 
-        feet_pos_y = ((self.asset.data.body_state_w[:, self.asset_cfg.body_ids ,1] + self.cols_offset)
-                      /self.horizontal_scale).round().long() 
-        feet_pos_x = torch.clip(feet_pos_x, 0, self.x_edge_masks_tensor.shape[0]-1)
-        feet_pos_y = torch.clip(feet_pos_y, 0, self.x_edge_masks_tensor.shape[1]-1)
+        feet_pos_x = self._to_mask_index(
+            self.asset.data.body_state_w[:, self.asset_cfg.body_ids, 0] + self.rows_offset,
+            self.tile_size_x, self.num_rows, self.tile_width_pixels,
+        )
+        feet_pos_y = self._to_mask_index(
+            self.asset.data.body_state_w[:, self.asset_cfg.body_ids, 1] + self.cols_offset,
+            self.tile_size_y, self.num_cols, self.tile_length_pixels,
+        )
         feet_at_edge = self.x_edge_masks_tensor[feet_pos_x, feet_pos_y]
         contact_forces = self.contact_sensor.data.net_forces_w_history[:, 0, self.sensor_cfg.body_ids] #(N, 4, 3)
         previous_contact_forces = self.contact_sensor.data.net_forces_w_history[:, -1, self.sensor_cfg.body_ids] # N, 4, 3
