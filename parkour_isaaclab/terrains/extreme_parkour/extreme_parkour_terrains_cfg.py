@@ -163,10 +163,10 @@ class ExtremeParkourTrapezoidRampTerrainCfg(ExtremeParkourRoughTerrainCfg):
     slope_angle: str = '10 + 27*difficulty'
     """경사 각도 (도). 10행 커리큘럼(difficulty = row/9)에서 10, 13, ..., 37도가 된다."""
 
-    course_width: float = 5.0
-    """구조물 폭 (m). 타일 폭(size[1])보다 크면 타일 전체 폭을 쓴다.
-    현재 타일이 4m 폭이라 사실상 전폭이다. 5m 를 그대로 쓰려면 generator 의
-    size 를 (x, 5.0) 이상으로 키워야 한다 (모든 지형에 영향)."""
+    course_width_range: tuple[float, float] = (2.0, 4.0)
+    """구조물 폭의 랜덤 범위 (m). 타일마다 하나를 뽑고, 타일 폭(size[1])보다
+    넓게 뽑히면 타일 전체 폭으로 잘린다. 코스 밖은 평지로 남으며 goal 은
+    항상 구조물 위에 찍힌다 (hurdle 의 half_valid_width 와 같은 구조)."""
 
     plateau_len_range: tuple[float, float] = (1.5, 3.0)
     """꼭대기 평지 길이의 랜덤 범위 (m)."""
@@ -203,8 +203,8 @@ class ExtremeParkourTrapezoidStairsTerrainCfg(ExtremeParkourRoughTerrainCfg):
     """디딤판(tread) 깊이의 랜덤 범위 (m). step 지형의 x_range(0.3, 1.5) 방식을
     따르되, 왕복 10칸이 16m 타일을 넘치지 않도록 상한을 0.8 로 줄였다."""
 
-    course_width: float = 5.0
-    """구조물 폭 (m). ramp 쪽과 같은 의미."""
+    course_width_range: tuple[float, float] = (2.0, 4.0)
+    """구조물 폭의 랜덤 범위 (m). ramp 쪽과 같은 의미."""
 
     plateau_len_range: tuple[float, float] = (1.5, 3.0)
     """꼭대기 평지 길이의 랜덤 범위 (m)."""

@@ -545,13 +545,15 @@ def _lay_goals_over_trapezoid(
 def _course_span(cfg, width_pixels: int, length_pixels: int):
     """사다리꼴 지형 공통: 시작 플랫폼과 코스 폭(y 구간)을 계산한다.
 
-    ``course_width`` (기본 5.0m) 가 타일 폭보다 넓으면 타일 전체 폭을 쓴다.
-    (현재 타일은 4m 폭이라 사실상 전폭 코스가 된다. 폭 5m 를 그대로 쓰려면
-    generator 의 size[1] 을 5.0 이상으로 키워야 한다.)
+    구조물 폭은 타일마다 ``course_width_range`` (기본 2.0~4.0m) 에서 뽑는다.
+    타일 폭(size[1])보다 넓게 뽑히면 타일 전체 폭으로 잘린다.
+    코스 밖(y 구간 바깥)은 평지로 남는다 — hurdle 의 half_valid_width 와 같은
+    구조로, 우회는 goal 이 구조물 위(y 구간 안)에 찍히는 것으로 막는다.
     """
     platform_len = round(cfg.platform_len / cfg.horizontal_scale)
     mid_y = length_pixels // 2
-    half_w = round(min(cfg.course_width, cfg.size[1]) / cfg.horizontal_scale) // 2
+    course_width = np.random.uniform(*cfg.course_width_range)
+    half_w = round(min(course_width, cfg.size[1]) / cfg.horizontal_scale) // 2
     y_lo = max(0, mid_y - half_w)
     y_hi = min(length_pixels, mid_y + half_w)
     return platform_len, mid_y, y_lo, y_hi
