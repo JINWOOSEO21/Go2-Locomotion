@@ -4,7 +4,10 @@ from isaaclab.utils import configclass
 ##
 # Pre-defined configs
 ##
-from parkour_isaaclab.terrains.extreme_parkour.config.parkour import EXTREME_PARKOUR_TERRAINS_CFG  # isort: skip
+from parkour_isaaclab.terrains.extreme_parkour.config.parkour import (  # isort: skip
+    EXTREME_PARKOUR_TERRAINS_CFG,
+    apply_terrain_preset,
+)
 from parkour_isaaclab.envs import ParkourManagerBasedRLEnvCfg
 from .parkour_mdp_cfg import * 
 from parkour_tasks.default_cfg import ParkourDefaultSceneCfg, VIEWER
@@ -59,6 +62,10 @@ class UnitreeGo2TeacherParkourEnvCfg(ParkourManagerBasedRLEnvCfg):
         self.scene.height_scanner.update_period = self.sim.dt * self.decimation
         self.scene.contact_forces.update_period = self.sim.dt * self.decimation
         self.scene.terrain.terrain_generator.curriculum = True
+        # 지형 분포는 parkour.py 의 TERRAIN_PRESETS 한 곳에서만 관리한다.
+        # EXTREME_PARKOUR_TERRAINS_CFG 는 모듈 레벨 공유 객체라 다른 env cfg 가
+        # 먼저 proportion 을 바꿨을 수 있으므로, 기본값에 기대지 말고 항상 명시한다.
+        apply_terrain_preset(self.scene.terrain.terrain_generator, "trapezoid_train")
         self.actions.joint_pos.use_delay = False
         self.actions.joint_pos.history_length = 1
         self.events.random_camera_position = None
@@ -84,11 +91,15 @@ class UnitreeGo2TeacherParkourEnvCfg_EVAL(UnitreeGo2TeacherParkourEnvCfg):
         self.events.randomize_rigid_body_mass = None
         self.events.push_by_setting_velocity.interval_range_s = (6.,6.)
         self.commands.base_velocity.resampling_time_range = (60.,60.)
-        for key, sub_terrain in self.scene.terrain.terrain_generator.sub_terrains.items():
-            if key ==['parkour','parkour_hurdle','parkour_step','parkour_gap']:
-                sub_terrain.noise_range = (0.02, 0.02)
-                sub_terrain.proportion = 0.25
-                
+        # 학습(trapezoid_train)과 같은 3종을 균등하게 평가한다.
+        # 여기가 "eval_core"(원조 4종)였는데, 지금 teacher 는 그 4종을 한 번도
+        # 본 적이 없으므로 학습 안 한 지형 위에서 평가하는 꼴이었다.
+        # 원조 4종 체크포인트를 평가할 때는 "eval_core" 로 되돌릴 것.
+        apply_terrain_preset(
+            self.scene.terrain.terrain_generator, "trapezoid_train_all",
+            active_overrides={"noise_range": (0.02, 0.02)},
+        )
+
 @configclass
 class UnitreeGo2TeacherParkourEnvCfg_PLAY(UnitreeGo2TeacherParkourEnvCfg_EVAL):
     viewer = VIEWER 
@@ -103,11 +114,15 @@ class UnitreeGo2TeacherParkourEnvCfg_PLAY(UnitreeGo2TeacherParkourEnvCfg_EVAL):
         if self.scene.terrain.terrain_generator is not None:
             self.scene.terrain.terrain_generator.difficulty_range = (0.7,1.0)
         self.events.push_by_setting_velocity = None
-        for key, sub_terrain in self.scene.terrain.terrain_generator.sub_terrains.items():
-            if key =='parkour_flat':
-                sub_terrain.proportion = 0.0
-            else:
-                sub_terrain.proportion = 0.2
-                sub_terrain.noise_range = (0.02, 0.02)
+        # 학습에 실제로 쓰는 3종(사다리꼴 램프/계단 + flat)만 균등하게 본다.
+        # one_col_per_terrain=True 가 num_cols 를 활성 지형 수(=3)에 맞춰
+        # 커리큘럼 컬럼→지형 매핑을 1:1 로 떨어뜨린다. 부모(EVAL)가 잡아 둔
+        # num_cols=5 는 여기서 덮어써진다.
+        # 사다리꼴 2종만 보고 싶으면 "trapezoid_only" 로 바꾸면 된다.
+        apply_terrain_preset(
+            self.scene.terrain.terrain_generator, "trapezoid_train_all",
+            one_col_per_terrain=True,
+            active_overrides={"noise_range": (0.02, 0.02)},
+        )
 
 

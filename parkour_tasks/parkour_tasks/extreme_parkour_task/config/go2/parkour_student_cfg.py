@@ -7,6 +7,7 @@ from isaaclab.utils import configclass
 # Pre-defined configs
 ##
 from parkour_isaaclab.terrains.extreme_parkour.extreme_parkour_terrains_cfg import ExtremeParkourRoughTerrainCfg
+from parkour_isaaclab.terrains.extreme_parkour.config.parkour import apply_terrain_preset
 # isort: skip
 from parkour_isaaclab.envs import ParkourManagerBasedRLEnvCfg
 from .parkour_mdp_cfg import * 
@@ -58,29 +59,17 @@ class ParkourStudentSceneCfg(ParkourTeacherSceneCfg):
         self.terrain.terrain_generator.num_rows = 10
         self.terrain.terrain_generator.num_cols = 20
         self.terrain.terrain_generator.horizontal_scale = 0.1
-        for key, sub_terrain in self.terrain.terrain_generator.sub_terrains.items():
+        # 기하 관련 설정은 분포와 무관하게 전 지형에 적용한다.
+        for sub_terrain in self.terrain.terrain_generator.sub_terrains.values():
             sub_terrain: ExtremeParkourRoughTerrainCfg
-            sub_terrain.use_simplified = True 
+            sub_terrain.use_simplified = True
             sub_terrain.horizontal_scale = 0.1
-            if key == 'parkour_demo':
-                sub_terrain.proportion = 0.15
-
-            elif key =='parkour_flat':
-                sub_terrain.proportion = 0.05
-
-            elif key in ('parkour_pyramid_stairs', 'parkour_pyramid_stairs_up',
-                         'parkour_discrete_obstacles', 'parkour_random_grid'):
-                # 나중에 추가된 지형들. 이미 학습된 체크포인트와 분포를 맞추려고 학습에서는
-                # 빼둔다. 이 지형까지 포함해 재학습하려면 0.2 로 올리면 된다.
-                sub_terrain.proportion = 0.0
-
-            else:
-                sub_terrain.proportion = 0.2
-                # 문자열은 `is` 가 아니라 `!=` 로 비교해야 한다.
-                # `is not '문자열'` 은 객체 동일성 비교라 인터닝 여부에 따라 결과가 달라진다
-                # (SyntaxWarning: "is not" with a literal).
-                if key != 'parkour':
-                    sub_terrain.y_range = (-0.1, 0.1)
+        # 지형 분포는 parkour.py 의 TERRAIN_PRESETS 에서 관리한다.
+        # 원래의 원조 5종 분포로 되돌리려면 "student_train" 으로 바꾸면 된다.
+        apply_terrain_preset(self.terrain.terrain_generator, "trapezoid_train")
+        # gap/hurdle/step 은 코스 중심선을 살짝 흔든다 ('parkour' 는 자체 y_range 를 쓴다).
+        for key in ('parkour_gap', 'parkour_hurdle', 'parkour_step'):
+            self.terrain.terrain_generator.sub_terrains[key].y_range = (-0.1, 0.1)
 
 
 
@@ -152,12 +141,11 @@ class UnitreeGo2StudentParkourEnvCfg_EVAL(UnitreeGo2StudentParkourEnvCfg):
         self.events.push_by_setting_velocity.interval_range_s = (6.,6.)
         self.events.random_camera_position.params['rot_noise_range'] = {'pitch':(0, 1)}
         
-        for key, sub_terrain in self.scene.terrain.terrain_generator.sub_terrains.items():
-            if key in ['parkour_flat', 'parkour_demo']:
-                sub_terrain.proportion = 0.0
-            else:
-                sub_terrain.proportion = 0.25
-                sub_terrain.noise_range = (0.02, 0.02)
+        # 실전 장애물 8종 균등 (flat/demo 제외) — 기존 else 블록과 같은 분포다.
+        apply_terrain_preset(
+            self.scene.terrain.terrain_generator, "all_obstacles",
+            active_overrides={"noise_range": (0.02, 0.02)},
+        )
 
 @configclass
 class UnitreeGo2StudentParkourEnvCfg_PLAY(UnitreeGo2StudentParkourEnvCfg_EVAL):
@@ -187,31 +175,18 @@ class UnitreeGo2StudentParkourEnvCfg_PLAY(UnitreeGo2StudentParkourEnvCfg_EVAL):
             # 24m 면 5종 지형 모두 잘림 없이 들어간다. generator.size 는
             # super().__init__ 에서 sub_cfg.size 로 전파된다.
             self.scene.terrain.terrain_generator.size = (24.0, 4.0)
-            # 컬럼 수를 지형 종류 수에 맞추면 로봇 8마리가 8종에 1마리씩 배정된다.
-            #   col 0 gap / 1 hurdle / 2 step / 3 parkour(램프)
-            #       / 4 pyramid_stairs(구덩이) / 5 pyramid_stairs_up(오르막)
-            #       / 6 discrete_obstacles / 7 random_grid
-            #   terrain_types = floor(arange(num_envs) / (num_envs/num_cols))
-            # 컬럼→지형 매핑은 아래 proportion 루프의 결과로 정해진다. 비중이 0 이 아닌
-            # 지형이 정확히 num_cols 개일 때만 1:1 로 떨어지므로, 둘을 같이 고쳐야 한다.
-            # (예전에 num_cols=5 인데 유효 지형이 4종이라 col 0,1 이 모두 gap 이었다.)
-            self.scene.terrain.terrain_generator.num_cols = 8
             # num_rows 는 부모(EVAL)의 5 를 그대로 쓴다 = 커리큘럼 5단계.
             # VRAM 이 부족할 때는 여기서 줄일 수 있다. difficulty_range 를 (d, d) 로
             # 고정한 경우에는 모든 행이 같은 난이도라 로봇이 겪는 코스가 달라지지 않는다.
             # 다만 난이도를 범위로 쓸 때는 커리큘럼 단계 수가 줄어드니 주의.
         self.events.push_by_setting_velocity = None
-        # 위 num_cols 와 짝을 맞춰 정확히 8종만 남긴다:
-        #   parkour_gap / parkour_hurdle / parkour_step / parkour
-        #   / parkour_pyramid_stairs / parkour_pyramid_stairs_up
-        #   / parkour_discrete_obstacles / parkour_random_grid
-        # parkour_demo 는 EVAL 에서 0 으로 꺼두는데 예전 코드가 여기서 다시 켜고 있었다.
-        # num_cols=4 일 때는 컬럼이 모자라 우연히 안 뽑혔지만, 5 로 늘리면 마지막 컬럼을
-        # demo 가 차지해 피라미드가 나오지 않는다.
-        for key, sub_terrain in self.scene.terrain.terrain_generator.sub_terrains.items():
-            if key in ('parkour_flat', 'parkour_demo'):
-                sub_terrain.proportion = 0.0
-            else:
-                sub_terrain.proportion = 0.25
-                sub_terrain.noise_range = (0.02, 0.02)
+        # 학습 지형(사다리꼴 2종)만 균등. flat 은 학습 보조라 뺀다.
+        # one_col_per_terrain=True 가 num_cols 를 활성 지형 수(=2)에 자동으로 맞춘다
+        # (커리큘럼 컬럼→지형 매핑이 1:1 로 떨어지는 조건). 프리셋에 지형을 더하면
+        # 컬럼 수도 같이 늘어나므로 num_cols 를 따로 맞출 필요가 없다.
+        apply_terrain_preset(
+            self.scene.terrain.terrain_generator, "trapezoid_only",
+            one_col_per_terrain=True,
+            active_overrides={"noise_range": (0.02, 0.02)},
+        )
 
