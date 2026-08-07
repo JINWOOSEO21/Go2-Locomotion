@@ -4,7 +4,10 @@ from isaaclab.utils import configclass
 ##
 # Pre-defined configs
 ##
-from parkour_isaaclab.terrains.extreme_parkour.config.parkour import EXTREME_PARKOUR_TERRAINS_CFG  # isort: skip
+from parkour_isaaclab.terrains.extreme_parkour.config.parkour import (  # isort: skip
+    EXTREME_PARKOUR_TERRAINS_CFG,
+    apply_terrain_preset,
+)
 from parkour_isaaclab.envs import ParkourManagerBasedRLEnvCfg
 from .parkour_mdp_cfg import * 
 from parkour_tasks.default_cfg import ParkourDefaultSceneCfg, VIEWER
@@ -59,6 +62,10 @@ class UnitreeGo2TeacherParkourEnvCfg(ParkourManagerBasedRLEnvCfg):
         self.scene.height_scanner.update_period = self.sim.dt * self.decimation
         self.scene.contact_forces.update_period = self.sim.dt * self.decimation
         self.scene.terrain.terrain_generator.curriculum = True
+        # 지형 분포는 parkour.py 의 TERRAIN_PRESETS 한 곳에서만 관리한다.
+        # EXTREME_PARKOUR_TERRAINS_CFG 는 모듈 레벨 공유 객체라 다른 env cfg 가
+        # 먼저 proportion 을 바꿨을 수 있으므로, 기본값에 기대지 말고 항상 명시한다.
+        apply_terrain_preset(self.scene.terrain.terrain_generator, "teacher_train")
         self.actions.joint_pos.use_delay = False
         self.actions.joint_pos.history_length = 1
         self.events.random_camera_position = None
@@ -84,11 +91,14 @@ class UnitreeGo2TeacherParkourEnvCfg_EVAL(UnitreeGo2TeacherParkourEnvCfg):
         self.events.randomize_rigid_body_mass = None
         self.events.push_by_setting_velocity.interval_range_s = (6.,6.)
         self.commands.base_velocity.resampling_time_range = (60.,60.)
-        for key, sub_terrain in self.scene.terrain.terrain_generator.sub_terrains.items():
-            if key ==['parkour','parkour_hurdle','parkour_step','parkour_gap']:
-                sub_terrain.noise_range = (0.02, 0.02)
-                sub_terrain.proportion = 0.25
-                
+        # 원조 4종 균등. 예전 코드는 `if key == [리스트]` 라 조건이 항상 False 여서
+        # 이 블록이 한 번도 실행되지 않았다 (= 학습 분포 그대로 평가되고 있었다).
+        # 프리셋으로 바꾸면서 원래 의도(4종 0.25 + noise 고정)대로 살렸다.
+        apply_terrain_preset(
+            self.scene.terrain.terrain_generator, "eval_core",
+            active_overrides={"noise_range": (0.02, 0.02)},
+        )
+
 @configclass
 class UnitreeGo2TeacherParkourEnvCfg_PLAY(UnitreeGo2TeacherParkourEnvCfg_EVAL):
     viewer = VIEWER 
@@ -103,11 +113,10 @@ class UnitreeGo2TeacherParkourEnvCfg_PLAY(UnitreeGo2TeacherParkourEnvCfg_EVAL):
         if self.scene.terrain.terrain_generator is not None:
             self.scene.terrain.terrain_generator.difficulty_range = (0.7,1.0)
         self.events.push_by_setting_velocity = None
-        for key, sub_terrain in self.scene.terrain.terrain_generator.sub_terrains.items():
-            if key =='parkour_flat':
-                sub_terrain.proportion = 0.0
-            else:
-                sub_terrain.proportion = 0.2
-                sub_terrain.noise_range = (0.02, 0.02)
+        # flat 만 빼고 전부 균등 (demo + 이식 지형 4종 포함) — 기존 else 블록과 같은 분포다.
+        apply_terrain_preset(
+            self.scene.terrain.terrain_generator, "all_with_demo",
+            active_overrides={"noise_range": (0.02, 0.02)},
+        )
 
 
