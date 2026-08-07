@@ -181,10 +181,16 @@ EXTRA_TERRAINS = (
 TRAPEZOID_TERRAINS = ("parkour_trapezoid_ramp", "parkour_trapezoid_stairs")
 
 TERRAIN_PRESETS: dict[str, dict[str, float]] = {
-    # 사다리꼴 2종만 반반. teacher/student 학습이 현재 이걸 쓴다.
+    # 사다리꼴 2종 + 워밍업용 평지. teacher/student 학습이 현재 이걸 쓴다.
+    # flat 은 초반 학습이 막히지 않도록 섞는 완충재다 (기존 student_train 에서
+    # demo 0.15 + flat 0.05 가 하던 역할). 지형 종류 배정은 env 생성 시 한 번
+    # 정해지고 학습 내내 바뀌지 않으므로(커리큘럼은 난이도 행만 움직인다),
+    # 이 비율은 끝까지 그대로 유지된다.
     # 원래 분포로 되돌리려면 각 env cfg 의 apply_terrain_preset 인자를
     # "teacher_train" / "student_train" 으로 바꾸면 된다.
-    "trapezoid_train": {k: 0.5 for k in TRAPEZOID_TERRAINS},
+    "trapezoid_train": {**{k: 0.45 for k in TRAPEZOID_TERRAINS}, "parkour_flat": 0.1},
+    # PLAY/EVAL 용: 사다리꼴 2종만 균등 (flat 은 학습 보조라 뺀다).
+    "trapezoid_only": {k: 1.0 for k in TRAPEZOID_TERRAINS},
     # teacher 학습: 원조 4종 + flat. (기존 체크포인트와 분포를 맞춰야 하므로
     # EXTRA_TERRAINS 는 뺀다. 포함해 재학습하려면 여기에 추가할 것.)
     "teacher_train": {**{k: 0.2 for k in CORE_TERRAINS}, "parkour_flat": 0.2},

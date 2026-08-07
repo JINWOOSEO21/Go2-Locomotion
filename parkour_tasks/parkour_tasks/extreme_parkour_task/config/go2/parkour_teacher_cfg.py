@@ -113,9 +113,9 @@ class UnitreeGo2TeacherParkourEnvCfg_PLAY(UnitreeGo2TeacherParkourEnvCfg_EVAL):
         if self.scene.terrain.terrain_generator is not None:
             self.scene.terrain.terrain_generator.difficulty_range = (0.7,1.0)
         self.events.push_by_setting_velocity = None
-        # flat 만 빼고 전부 균등 (demo + 이식 지형 4종 포함) — 기존 else 블록과 같은 분포다.
+        # 학습 지형(사다리꼴 2종)만 균등. flat 은 학습 보조라 뺀다.
         apply_terrain_preset(
-            self.scene.terrain.terrain_generator, "all_with_demo",
+            self.scene.terrain.terrain_generator, "trapezoid_only",
             active_overrides={"noise_range": (0.02, 0.02)},
         )
 

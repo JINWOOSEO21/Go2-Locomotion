@@ -180,12 +180,12 @@ class UnitreeGo2StudentParkourEnvCfg_PLAY(UnitreeGo2StudentParkourEnvCfg_EVAL):
             # 고정한 경우에는 모든 행이 같은 난이도라 로봇이 겪는 코스가 달라지지 않는다.
             # 다만 난이도를 범위로 쓸 때는 커리큘럼 단계 수가 줄어드니 주의.
         self.events.push_by_setting_velocity = None
-        # 실전 장애물 8종 균등 + 로봇 1마리당 1종 배정.
-        # one_col_per_terrain=True 가 num_cols 를 활성 지형 수에 자동으로 맞춰 주므로
-        # (커리큘럼 컬럼→지형 매핑이 1:1 로 떨어지는 조건), 프리셋에 지형을 추가하면
-        # 컬럼 수도 같이 늘어난다. 예전처럼 num_cols 를 따로 맞출 필요가 없다.
+        # 학습 지형(사다리꼴 2종)만 균등. flat 은 학습 보조라 뺀다.
+        # one_col_per_terrain=True 가 num_cols 를 활성 지형 수(=2)에 자동으로 맞춘다
+        # (커리큘럼 컬럼→지형 매핑이 1:1 로 떨어지는 조건). 프리셋에 지형을 더하면
+        # 컬럼 수도 같이 늘어나므로 num_cols 를 따로 맞출 필요가 없다.
         apply_terrain_preset(
-            self.scene.terrain.terrain_generator, "all_obstacles",
+            self.scene.terrain.terrain_generator, "trapezoid_only",
             one_col_per_terrain=True,
             active_overrides={"noise_range": (0.02, 0.02)},
         )
