@@ -1,7 +1,5 @@
 import os
 
-import isaaclab.sim as sim_utils
-from isaaclab.sensors import TiledCameraCfg
 from isaaclab.utils import configclass
 ##
 # Pre-defined configs
@@ -11,47 +9,18 @@ from parkour_isaaclab.terrains.extreme_parkour.config.parkour import apply_terra
 # isort: skip
 from parkour_isaaclab.envs import ParkourManagerBasedRLEnvCfg
 from .parkour_mdp_cfg import * 
-from parkour_tasks.default_cfg import  CAMERA_USD_CFG, CAMERA_CFG, VIEWER
+from parkour_tasks.default_cfg import  CAMERA_USD_CFG, CAMERA_CFG, RECORD_CAMERA_CFG, VIEWER
 from .parkour_teacher_cfg import ParkourTeacherSceneCfg
 @configclass
 class ParkourStudentSceneCfg(ParkourTeacherSceneCfg):
     depth_camera = CAMERA_CFG
     depth_camera_usd = None
 
-    # 녹화 전용 추격 카메라. env 마다 1대씩 생기고 로봇 base 에 붙어 따라다닌다.
-    # TiledCamera 는 모든 env 를 한 번의 렌더 패스로 처리하므로, env 별 카메라를
-    # 따로 두는 것보다 싸다. data.output["rgb"] 가 (num_envs, H, W, 3) 로 나온다.
-    #
-    # 로봇의 자식이 아니라 env 바로 아래에 둔다. 로봇 base 에 부착하면 몸체의
-    # pitch/roll/yaw 를 그대로 물려받아 점프할 때마다 화면이 같이 기운다.
-    # 여기서는 자세를 고정하고 위치만 따라가야 하므로, play_multicam.py 가 매 스텝
-    # camera.set_world_poses(로봇위치 + 고정오프셋, 고정쿼터니언) 로 갱신한다.
-    # 아래 offset 은 스폰 시 초기값일 뿐이고 이후에는 스크립트가 덮어쓴다.
-    #
-    # convention="world": +X 가 카메라 정면, +Z 가 위. rot 은 Y축 회전(하향 pitch).
-    # 로봇 뒤(-X) 3.0m, 위(+Z) 1.3m 이면 base 가 atan(1.3/3.0)=23.4도 아래에 보이고,
-    # 20도 숙이면 로봇이 화면 중앙 살짝 아래 + 전방 지형도 들어온다.
-    # (처음엔 10도로 뒀다가 로봇이 화면 하단에 잘려 20도로 키웠다.)
-    record_camera = TiledCameraCfg(
-        prim_path="{ENV_REGEX_NS}/record_cam",
-        offset=TiledCameraCfg.OffsetCfg(
-            pos=(-3.0, 0.0, 1.3),
-            rot=(0.9848078, 0.0, 0.1736482, 0.0),
-            convention="world",
-        ),
-        data_types=["rgb"],
-        spawn=sim_utils.PinholeCameraCfg(
-            focal_length=18.0, focus_distance=400.0,
-            horizontal_aperture=20.955, clipping_range=(0.1, 60.0),
-        ),
-        # play.py 의 뷰포트 녹화는 1280x720 이지만 그건 카메라 1대 기준이다.
-        # 여기는 env 마다 1대라 같은 해상도면 픽셀 수가 4배가 되고,
-        # 실측상 1280x720x4 는 CUDA OOM 이 났다(가용 6.8GiB, 필요 7GiB+).
-        # 960x540 은 1280x720 의 56%, 기존 640x360 의 2.25배.
-        # GPU 가 비면 1280x720 으로 올릴 수 있다.
-        width=960,
-        height=540,
-    )
+    # 녹화 전용 추격 카메라. 정의는 default_cfg.RECORD_CAMERA_CFG 한 곳에 있고
+    # teacher(play_multicam.py 가 주입)와 student 가 같은 화각을 쓴다.
+    # student 씬은 예전부터 이걸 상시로 들고 있고, 학습 경로에서는 train.py 가
+    # env_cfg.scene.record_camera = None 으로 떼어낸다.
+    record_camera = RECORD_CAMERA_CFG
 
 
     def __post_init__(self):

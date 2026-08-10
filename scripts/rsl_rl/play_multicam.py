@@ -3,21 +3,32 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""한 번의 실행으로 지형 종류별 영상을 동시에 뽑는 스크립트.
+"""한 번의 실행으로 지형 종류별 영상을 동시에 뽑는 스크립트. teacher / student 둘 다 된다.
 
 play.py 는 뷰포트 카메라 1대를 gym.wrappers.RecordVideo 로 녹화하므로 영상이 1개만 나온다.
 여기서는 씬에 붙인 TiledCamera(record_camera, env 마다 1대)를 직접 읽어
-env 별로 별도의 mp4 를 기록한다.
+env 별로 별도의 mp4 를 기록한다. teacher 씬은 record_camera 가 None 이라
+main() 이 default_cfg.RECORD_CAMERA_CFG 를 꽂아 넣는다(학습 경로는 그대로 비어 있다).
 
 env 와 지형의 대응은 terrain_types = floor(arange(num_envs) / (num_envs/num_cols)) 로 정해진다.
-PLAY 설정이 num_cols=4 이므로 --num_envs 4 로 실행하면
-  env0 parkour_gap / env1 parkour_hurdle / env2 parkour_step / env3 parkour(램프)
-가 1마리씩 배정된다.
+따라서 --num_envs 를 PLAY 설정의 num_cols(= 활성 지형 수)와 같게 주면 지형당 1마리가 된다.
+  teacher PLAY : trapezoid_train_all + one_col_per_terrain -> 3종
+                 (flat / 사다리꼴 램프 / 사다리꼴 계단) 이므로 --num_envs 3
+  student PLAY : trapezoid_only + one_col_per_terrain -> 2종 이므로 --num_envs 2
+출력 파일 이름에 실제 지형 이름이 들어가므로(envN_<terrain>.mp4) 매핑은 로그로 확인할 수 있다.
 
-사용 예:
+--with_depth 는 정책이 먹는 depth map 을 오른쪽에 붙이는데, depth 관측이 있는
+student(Distillation) 전용이다. teacher 는 height scanner 로 걷기 때문에 무시된다.
+
+사용 예 (teacher, 지형 3종 영상 3개):
+  python scripts/rsl_rl/play_multicam.py \
+      --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0 \
+      --num_envs 3 --headless --video_length 10000 --out_dir videos/teacher
+
+사용 예 (student):
   PARKOUR_DIFFICULTY=0.8 python scripts/rsl_rl/play_multicam.py \
       --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Play-v0 \
-      --num_envs 4 --headless --video_length 1000 --out_dir videos/d0.8
+      --num_envs 2 --headless --video_length 1000 --with_depth --out_dir videos/d0.8
 """
 
 """Launch Isaac Sim Simulator first."""
@@ -82,6 +93,7 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
+import copy
 import cv2
 import gymnasium as gym
 import imageio.v2 as imageio
@@ -98,6 +110,7 @@ from scripts.rsl_rl.video_overlay import depth_to_panel
 
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
+from parkour_tasks.default_cfg import RECORD_CAMERA_CFG
 from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
 
 import isaaclab_tasks  # noqa: F401
@@ -200,6 +213,14 @@ def main():
 
     apply_spawn_rotation(env_cfg)
     apply_spawn_offset(env_cfg)
+
+    # 녹화 카메라를 꽂아 넣는다.
+    # student 씬은 record_camera 를 상시로 들고 있지만(학습 때만 train.py 가 떼어낸다),
+    # teacher 씬은 학습이 6144 env 라 상시로 두면 VRAM 이 감당이 안 돼 None 으로 비워
+    # 뒀다. 녹화는 이 스크립트만 하므로 여기서 채우면 다른 경로는 그대로 둘 수 있다.
+    if getattr(env_cfg.scene, "record_camera", None) is None:
+        env_cfg.scene.record_camera = copy.deepcopy(RECORD_CAMERA_CFG)
+        print("[INFO] record_camera 가 없어 default_cfg.RECORD_CAMERA_CFG 를 씬에 추가한다.")
 
     # render_mode 는 주지 않는다. 프레임은 뷰포트가 아니라 record_camera 에서 읽는다.
     env = gym.make(args_cli.task, cfg=env_cfg)
