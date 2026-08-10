@@ -205,7 +205,9 @@ def main(env_cfg: ParkourManagerBasedRLEnv |ManagerBasedRLEnvCfg | DirectRLEnvCf
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "DistillationWithExtractor":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
-        runner.load(resume_path)
+        # 학습 재개에서만 지형 커리큘럼까지 되살린다. 체크포인트에 terrain_levels 가
+        # 없거나(구 체크포인트) env 수가 달라지면 조용히 건너뛰고 경고만 남긴다.
+        runner.load(resume_path, restore_terrain_curriculum=True)
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)

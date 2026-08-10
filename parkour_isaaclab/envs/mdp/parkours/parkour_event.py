@@ -90,6 +90,43 @@ class ParkourEvent(ParkourTerm):
         self.cur_goals = self._gather_cur_goals()
         self.next_goals = self._gather_cur_goals(future=1)
 
+    def restore_terrain_levels(self, levels: torch.Tensor):
+        """지형 커리큘럼 단계를 통째로 덮어쓰고, 거기서 파생되는 캐시를 전부 다시 만든다.
+
+        체크포인트에서 학습을 재개할 때 쓴다. terrain_levels 는 모델 파라미터와 달리
+        어디에도 저장되지 않아서, 그냥 재개하면 _compute_env_origins_curriculum 이
+        randint(0, max_init_terrain_level+1) 로 다시 뽑아 커리큘럼이 바닥으로 돌아간다.
+
+        _resample_command 가 리셋된 env 에 대해 하는 재계산과 같은 일을 전 env 에
+        대해 한다. 다만 여기서는 move_up/move_down 판정을 하지 않고 주어진 값을
+        그대로 쓴다. cur_goal_idx / reach_goal_timer / dis_to_start_pos 는 건드리지
+        않는다. 호출자가 곧바로 env 를 리셋해 그 값들을 0 으로 만드는 것을 전제한다.
+
+        env_origins 는 terrain.env_origins 와 같은 텐서라 여기서 제자리 수정하면
+        씬 쪽에도 그대로 반영된다.
+        """
+        levels = levels.to(device=self.terrain.terrain_levels.device,
+                           dtype=self.terrain.terrain_levels.dtype)
+        # 저장 당시보다 지형이 얕아졌을 수 있다. 그대로 색인하면 out-of-bounds 다.
+        self.terrain.terrain_levels[:] = levels.clamp_(0, self.terrain.max_terrain_level - 1)
+
+        rows, cols = self.terrain.terrain_levels, self.terrain.terrain_types
+        self.env_origins[:] = self.terrain.terrain_origins[rows, cols]
+        self.env_class[:] = self.terrain_class[rows, cols]
+
+        temp = self.terrain_goals[rows, cols]
+        last_col = temp[:, -1].unsqueeze(1)
+        self.env_goals[:] = torch.cat((temp, last_col.repeat(1, self.cfg.num_future_goal_obs, 1)), dim=1)[:]
+        self.cur_goals = self._gather_cur_goals()
+        self.next_goals = self._gather_cur_goals(future=1)
+
+        numpy_terrain_levels = rows.detach().cpu().numpy()
+        numpy_terrain_types = cols.detach().cpu().numpy()
+        self.env_per_terrain_name = self.total_terrain_names[numpy_terrain_levels, numpy_terrain_types]
+
+        if self.debug_vis:
+            self.env_per_heights = self.total_heights[rows, cols]
+
     def _gather_cur_goals(self, future=0):
         return self.env_goals.gather(1, (self.cur_goal_idx[:, None, None]+future).expand(-1, -1, self.env_goals.shape[-1])).squeeze(1)
 

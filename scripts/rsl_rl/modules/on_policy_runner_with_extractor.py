@@ -527,6 +527,12 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         if self.depth_encoder_cfg is not None :
             saved_dict['depth_encoder_state_dict'] = self.alg.depth_encoder.state_dict()
             saved_dict['depth_actor_state_dict'] = self.alg.depth_actor.state_dict()
+        # -- 지형 커리큘럼 단계. 모델 밖에 있는 유일한 학습 상태라 같이 저장한다.
+        #    없으면 재개할 때 randint(0, max_init_terrain_level+1) 로 다시 뽑혀
+        #    커리큘럼이 바닥부터 다시 올라간다 (student 기준 10단계 중 0~2 로 리셋).
+        terrain_levels = self._get_terrain_levels()
+        if terrain_levels is not None:
+            saved_dict["terrain_levels"] = terrain_levels.detach().cpu()
         # save model
         torch.save(saved_dict, path)
 
@@ -534,7 +540,13 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         if self.logger_type in ["neptune", "wandb"] and not self.disable_logs:
             self.writer.save_model(path, self.current_learning_iteration)
 
-    def load(self, path: str, load_optimizer: bool = True):
+    def load(self, path: str, load_optimizer: bool = True, restore_terrain_curriculum: bool = False):
+        """restore_terrain_curriculum 은 학습 재개(train.py)에서만 켠다.
+
+        play/evaluation 은 cfg 가 정한 난이도 분포(EVAL 은 max_init_terrain_level=None
+        + random_difficulty)로 돌아야 하는데, 학습 중의 커리큘럼 단계를 되살리면
+        그 분포를 덮어써 버린다.
+        """
         loaded_dict = torch.load(path, weights_only=False)
         resumed_training = self.alg.policy.load_state_dict(loaded_dict["model_state_dict"])
         self.alg.estimator.load_state_dict(loaded_dict['estimator_state_dict'])
@@ -592,7 +604,60 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         # -- load current learning iteration
         if resumed_training:
             self.current_learning_iteration = loaded_dict["iter"]
+        # -- 지형 커리큘럼 복원. 모델 로드가 다 끝난 뒤에 한다.
+        if restore_terrain_curriculum:
+            self._restore_terrain_levels(loaded_dict.get("terrain_levels"))
         return loaded_dict["infos"]
+
+    def _parkour_terms(self):
+        """씬에 붙어 있는 파쿠르 이벤트 term 들. 없으면 빈 리스트."""
+        manager = getattr(self.env.unwrapped, "parkour_manager", None)
+        if manager is None:
+            return []
+        try:
+            return [manager.get_term(name) for name in manager.active_terms]
+        except (AttributeError, KeyError):
+            return list(getattr(manager, "_terms", {}).values())
+
+    def _get_terrain_levels(self):
+        """지형 커리큘럼 단계 텐서. 커리큘럼이 없는 씬이면 None."""
+        terrain = getattr(self.env.unwrapped.scene, "terrain", None)
+        return getattr(terrain, "terrain_levels", None) if terrain is not None else None
+
+    def _restore_terrain_levels(self, levels):
+        """체크포인트의 커리큘럼 단계를 되살린다.
+
+        복원 후 env 를 한 번 리셋한다. 로봇이 옛 타일 위에 서 있는 채로 origin 만
+        바뀌면 goal 까지의 상대 위치가 한 에피소드 내내 어긋나기 때문이다.
+
+        리셋은 각 env 의 _resample_command 를 부르고, 그게 move_up/move_down 으로
+        단계를 한 칸씩 흔든다(리셋 직후라 이동거리가 0 이라 대부분 강등된다).
+        그래서 리셋 뒤에 한 번 더 덮어쓴다. 이 시점의 로봇은 이미 복원된 origin 에
+        놓여 있고 dis_to_start_pos / cur_goal_idx 도 리셋이 0 으로 만들어 둔 뒤다.
+        """
+        if levels is None:
+            return
+        current = self._get_terrain_levels()
+        if current is None:
+            warnings.warn("checkpoint has terrain_levels but this scene has no terrain curriculum; skipping")
+            return
+        if levels.shape != current.shape:
+            warnings.warn(
+                f"terrain_levels shape mismatch (checkpoint {tuple(levels.shape)} vs env {tuple(current.shape)}),"
+                " probably a different --num_envs; the terrain curriculum restarts from scratch"
+            )
+            return
+        terms = self._parkour_terms()
+        if not terms:
+            warnings.warn("no parkour term found; not restoring terrain levels")
+            return
+
+        for term in terms:
+            term.restore_terrain_levels(levels)
+        self.env.reset()
+        for term in terms:
+            term.restore_terrain_levels(levels)
+        print(f"Restored terrain curriculum from checkpoint (mean level {levels.float().mean():.2f}).")
 
     def get_estimator_inference_policy(self, device=None):
         self.alg: PPOWithExtractor
