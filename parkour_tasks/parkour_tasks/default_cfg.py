@@ -119,7 +119,7 @@ CAMERA_USD_CFG = AssetBaseCfg(
 #
 # 로봇의 자식이 아니라 env 바로 아래에 둔다. 로봇 base 에 부착하면 몸체의
 # pitch/roll/yaw 를 그대로 물려받아 점프할 때마다 화면이 같이 기운다.
-# 여기서는 자세를 고정하고 위치만 따라가야 하므로, play_multicam.py 가 매 스텝
+# 여기서는 자세를 고정하고 위치만 따라가야 하므로, play.py --multicam 이 매 스텝
 # camera.set_world_poses_from_view(로봇위치 + 고정오프셋, 로봇위치) 로 갱신한다.
 # 아래 offset 은 스폰 시 초기값일 뿐이고 이후에는 스크립트가 덮어쓴다.
 #
@@ -130,7 +130,7 @@ CAMERA_USD_CFG = AssetBaseCfg(
 #
 # 이 카메라는 씬에 있기만 해도 --enable_cameras 가 필요하고, env 수만큼 렌더가
 # 돌아 VRAM 과 속도를 먹는다. 그래서 teacher 씬은 record_camera=None 으로 두고
-# play_multicam.py 가 녹화할 때만 이 cfg 를 꽂아 넣는다. student 씬은 예전부터
+# play.py --multicam 이 녹화할 때만 이 cfg 를 꽂아 넣는다. student 씬은 예전부터
 # 상시로 들고 있고, train.py 가 학습 경로에서 떼어낸다.
 RECORD_CAMERA_CFG = TiledCameraCfg(
     prim_path="{ENV_REGEX_NS}/record_cam",

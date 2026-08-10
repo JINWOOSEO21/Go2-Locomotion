@@ -34,7 +34,7 @@ class ParkourTeacherSceneCfg(ParkourDefaultSceneCfg):
     # 지형별 영상 녹화용 추격 카메라 자리. 기본은 None 이다.
     # InteractiveScene._add_entities_from_cfg 가 None 인 필드는 건너뛰므로
     # 학습(6144 env)/EVAL/play.py 경로에는 카메라가 아예 생기지 않는다.
-    # play_multicam.py 가 녹화할 때만 default_cfg.RECORD_CAMERA_CFG 를 꽂아 넣는다.
+    # play.py --multicam 이 녹화할 때만 default_cfg.RECORD_CAMERA_CFG 를 꽂아 넣는다.
     # (필드를 미리 선언해 두는 이유는 configclass 인스턴스에 없는 속성을 나중에
     #  붙이는 것보다 이쪽이 명시적이고 to_dict 등에서도 안전하기 때문이다.)
     record_camera = None

@@ -111,7 +111,7 @@ def main(env_cfg: ParkourManagerBasedRLEnv |ManagerBasedRLEnvCfg | DirectRLEnvCf
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
-    # student 씬의 record_camera(TiledCamera)는 play_multicam.py/demo.py 녹화 전용이다.
+    # student 씬의 record_camera(TiledCamera)는 play.py --multicam / demo.py 녹화 전용이다.
     # 학습에서는 이 카메라의 프레임을 읽는 곳이 없는데도, 씬에 있으면 --enable_cameras
     # 없이는 스폰 단계에서 RuntimeError 가 나고, 켜면 env 수만큼 960x540 렌더가
     # 매 스텝 돌아가 VRAM 과 속도를 잡아먹는다. 학습 경로에서는 항상 떼어낸다.

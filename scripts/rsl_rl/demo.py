@@ -92,7 +92,7 @@ parser.add_argument(
     help=(
         "Paste the depth map the policy actually consumes onto the right of each recorded frame, "
         "so one video shows the robot and its depth input side by side (same panel as "
-        "play_multicam.py --with_depth). Student (distillation) tasks only."
+        "play.py --multicam --with_depth). Student (distillation) tasks only."
     ),
 )
 parser.add_argument(
@@ -252,7 +252,7 @@ class ParkourDemoGO2:
                 env_cfg.scene.record_camera.height = int(h)
             else:
                 # 스트리밍을 안 하면 이 카메라의 프레임을 읽는 곳이 없다. 그래도 씬에 있으면
-                # 매 스텝 렌더는 그대로 돌아가므로 꺼 둔다(원래 play_multicam.py 의 녹화용이다).
+                # 매 스텝 렌더는 그대로 돌아가므로 꺼 둔다(원래 play.py --multicam 의 녹화용이다).
                 env_cfg.scene.record_camera = None
         self.env_cfg = env_cfg
         # wrap around environment for rsl-rl
@@ -344,7 +344,7 @@ class ParkourDemoGO2:
             )
         if args_cli.video:
             self.set_up_video_writer()
-        # play_multicam.py 와 같은 좌측 측면 시점. 월드 기준 상수 오프셋이라
+        # play.py --multicam 과 같은 좌측 측면 시점. 월드 기준 상수 오프셋이라
         # 자세는 고정된 채 평행이동만 하고, 로봇이 점프해도 화면이 기울지 않는다.
         self._record_cam_offset = torch.tensor([0.0, 2.6, 1.6], device=self.device)
 
@@ -400,7 +400,7 @@ class ParkourDemoGO2:
         if self.record_depth and self.last_depth is not None:
             # 정책 호출에 쓴 것과 같은 텐서를 그대로 그린다. depth 버퍼는 5 스텝마다
             # 갱신되므로 사이 스텝에서는 직전 프레임이 유지되는데, 그게 정책이 실제로
-            # 보고 있는 입력이다. play_multicam.py --with_depth 와 같은 패널이다.
+            # 보고 있는 입력이다. play.py --multicam --with_depth 와 같은 패널이다.
             panel = depth_to_panel(self.last_depth[idx].detach().cpu().numpy(), frame.shape[0])
             frame = np.hstack([frame, panel])
         if self.mjpeg is not None:

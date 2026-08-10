@@ -5,7 +5,7 @@
 
 """녹화 프레임에 붙이는 오버레이 유틸.
 
-play_multicam.py 와 demo.py 가 --with_depth 로 똑같은 depth 패널을 그리도록
+play.py --multicam 과 demo.py 가 --with_depth 로 똑같은 depth 패널을 그리도록
 구현을 여기 한 곳에만 둔다. 양쪽에 복사해 두면 컬러맵이나 정규화 규칙이
 갈라져서, 같은 정책을 찍은 영상인데 depth 가 달라 보이게 된다.
 """

@@ -11,7 +11,7 @@
   화질/지연은 WebRTC 보다 못하지만 설치가 필요 없다.
 
 프레임 출처는 씬에 이미 붙어 있는 record_camera(TiledCamera) 다. 뷰포트를 긁는 것보다
-헤드리스에서 안정적이고, play_multicam.py 가 mp4 를 뽑을 때 쓰는 것과 같은 카메라다.
+헤드리스에서 안정적이고, play.py --multicam 이 mp4 를 뽑을 때 쓰는 것과 같은 카메라다.
 """
 
 from __future__ import annotations

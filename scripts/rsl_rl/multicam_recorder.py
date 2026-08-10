@@ -9,7 +9,7 @@
 env 를 한 번의 렌더 패스로 처리하므로 env 별 카메라를 따로 두는 것보다 싸다.
 ``data.output["rgb"]`` 가 (num_envs, H, W, 3) 로 나온다.
 
-play.py 의 ``--multicam`` 과 play_multicam.py 가 같이 쓴다.
+play.py 의 ``--multicam`` 이 쓴다.
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ import os
 import torch
 
 import imageio.v2 as imageio
+
+from scripts.rsl_rl.video_overlay import depth_to_panel
 
 
 def resolve_terrain_names(env) -> list[str]:
@@ -92,8 +94,13 @@ class PerEnvVideoRecorder:
         target = self.robot.data.root_pos_w
         self.camera.set_world_poses_from_view(eyes=target + self.cam_offset, targets=target)
 
-    def capture(self) -> bool:
-        """현재 카메라 출력에서 env 별로 한 프레임씩 쓴다. 쓸 게 없으면 False."""
+    def capture(self, depth=None) -> bool:
+        """현재 카메라 출력에서 env 별로 한 프레임씩 쓴다. 쓸 게 없으면 False.
+
+        Args:
+            depth: (num_envs, ...) 모양의 depth 텐서/배열. 주면 각 프레임 오른쪽에
+                depth 패널을 붙인다 (play.py --with_depth). None 이면 RGB 만 쓴다.
+        """
         rgb = self.camera.data.output["rgb"]
         if rgb is None:
             return False
@@ -102,7 +109,10 @@ class PerEnvVideoRecorder:
             # float 로 나오는 경우 0..1 로 보고 변환한다.
             frames = np.clip(frames * 255.0, 0, 255).astype(np.uint8)
         for i, w in enumerate(self.writers):
-            w.append_data(frames[i])
+            frame = frames[i]
+            if depth is not None:
+                frame = np.hstack([frame, depth_to_panel(depth[i], frame.shape[0])])
+            w.append_data(frame)
         self.written += 1
         return True
 

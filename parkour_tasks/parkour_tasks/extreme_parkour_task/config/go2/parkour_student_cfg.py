@@ -17,7 +17,7 @@ class ParkourStudentSceneCfg(ParkourTeacherSceneCfg):
     depth_camera_usd = None
 
     # 녹화 전용 추격 카메라. 정의는 default_cfg.RECORD_CAMERA_CFG 한 곳에 있고
-    # teacher(play_multicam.py 가 주입)와 student 가 같은 화각을 쓴다.
+    # teacher(play.py --multicam 이 주입)와 student 가 같은 화각을 쓴다.
     # student 씬은 예전부터 이걸 상시로 들고 있고, 학습 경로에서는 train.py 가
     # env_cfg.scene.record_camera = None 으로 떼어낸다.
     record_camera = RECORD_CAMERA_CFG
