@@ -171,10 +171,14 @@ def main():
                 if env.unwrapped.common_step_counter %5 == 0:
                     obs_student = obs[:, :num_prop].clone()
                     obs_student[:, 6:8] = 0
-                    depth_latent_and_yaw = depth_encoder(depth_camera, obs_student)
-                    depth_latent = depth_latent_and_yaw[:, :-2]
-                    yaw = depth_latent_and_yaw[:, -2:]
-                obs[:, 6:8] = 1.5*yaw
+                    depth_encoder_out = depth_encoder(depth_camera, obs_student)
+                    # encoder 출력은 depth embedding 32 차원이다. heading 을 같이
+                    # 예측하던 시절의 체크포인트만 34 차원이라, 폭으로 갈라서 그때만
+                    # 예전처럼 obs 의 heading 을 덮어쓴다 (재생 호환).
+                    depth_latent = depth_encoder_out[:, :32]
+                    yaw = depth_encoder_out[:, 32:] if depth_encoder_out.shape[1] > 32 else None
+                if yaw is not None:
+                    obs[:, 6:8] = 1.5*yaw
                 # obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = estimator.inference(obs[:, :num_prop])
                 actions = policy(obs, hist_encoding=True, scandots_latent=depth_latent)
         cur_goal_idx = base_parkour.cur_goal_idx.clone()

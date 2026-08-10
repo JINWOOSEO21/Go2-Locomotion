@@ -95,6 +95,11 @@ class UnitreeGo2StudentParkourEnvCfg_EVAL(UnitreeGo2StudentParkourEnvCfg):
         self.scene.depth_camera_usd = CAMERA_USD_CFG
         self.scene.terrain.max_init_terrain_level = None
 
+        # oracle goal 마커(현재 goal 초록/이후 goal 빨강 구)와 그 방향을 가리키는
+        # 점선(작은 구 8 개)을 그린다. student 도 teacher 와 똑같이 oracle heading 을
+        # 관측으로 받으므로 teacher PLAY/EVAL 과 같은 것을 보여 준다.
+        self.parkours.base_parkour.debug_vis = True
+
         self.observations.depth_camera.depth_cam.params['debug_vis'] = True
 
         self.commands.base_velocity.resampling_time_range = (60.,60.)

@@ -5,6 +5,7 @@ import os
 import statistics
 import time
 import torch
+import torch.nn as nn
 from collections import deque
 
 import rsl_rl
@@ -329,7 +330,6 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
 
         obs, extras = self.env.get_observations()
         additional_obs = {}
-        additional_obs["delta_yaw_ok"] = extras['observations']['delta_yaw_ok'].to(self.device)
         additional_obs["depth_camera"] = extras["observations"]['depth_camera'].to(self.device)
         obs = obs.to(self.device)
 
@@ -352,22 +352,16 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         for it in range(start_iter, tot_iter):
             start = time.time()
             actions_buffer = []
-            delta_yaw_ok_buffer = []
-            yaws_buffer = []
             for _ in range(self.depth_encoder_cfg['num_steps_per_env']):
                 if self.env.unwrapped.common_step_counter %5 == 0:
                     obs_prop_depth = obs[:, :self.depth_encoder_cfg['num_prop']].clone()
+                    # encoder 입력에서만 heading 을 가린다. depth 로부터 지형을 읽는 것이
+                    # 목적이라 목표 방향을 흘려 주지 않는다. obs 본체의 6:8 은 건드리지
+                    # 않으므로 policy 는 teacher 와 똑같은 oracle heading 을 받는다.
                     obs_prop_depth[:, 6:8] = 0
-                    depth_latent_and_yaw = self.alg.depth_encoder(additional_obs["depth_camera"].clone(), obs_prop_depth)  # clone is crucial to avoid in-place operation
-                    depth_latent = depth_latent_and_yaw[:, :-2]
-                    yaw = 1.5*depth_latent_and_yaw[:, -2:]
-                    yaws_buffer.append(obs[:,6:8].detach() - yaw)
+                    depth_latent = self.alg.depth_encoder(additional_obs["depth_camera"].clone(), obs_prop_depth)  # clone is crucial to avoid in-place operation
                 with torch.no_grad():
                     actions_teacher = self.alg.policy.act_inference(obs, hist_encoding=True, scandots_latent=None)
-                    delta_yaw_ok_buffer.append(torch.nonzero(additional_obs["delta_yaw_ok"]).size(0) / additional_obs["delta_yaw_ok"].numel())
-                # 관측은 (num_envs, 1) 로 오지만 여기서는 행 인덱싱용 1-D 마스크가 필요하다.
-                delta_yaw_ok_mask = additional_obs["delta_yaw_ok"].reshape(-1)
-                obs[delta_yaw_ok_mask, 6:8] = yaw.detach()[delta_yaw_ok_mask]
                 actions_student = self.alg.depth_actor(obs, hist_encoding=True, scandots_latent=depth_latent)
                 actions_buffer.append(actions_teacher.detach() - actions_student)
                 
@@ -381,7 +375,6 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                     obs, _, dones, infos = self.env.step(actions_student.detach().to(self.env.device))
                     # Move to device
                     obs, dones = (obs.to(self.device), dones.to(self.device))
-                additional_obs['delta_yaw_ok'] = infos["observations"]['delta_yaw_ok']
                 additional_obs['depth_camera'] = infos["observations"]['depth_camera']
                 # perform normalization
                 obs = self.obs_normalizer(obs)
@@ -401,10 +394,8 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             stop = time.time()
             collection_time = stop - start
             start = stop
-            delta_yaw_ok_percentage = sum(delta_yaw_ok_buffer) / len(delta_yaw_ok_buffer)
             actions_buffer = torch.cat(actions_buffer, dim=0)
-            yaws_buffer = torch.cat(yaws_buffer, dim=0)
-            loss_dict = self.alg.update_depth_actor(actions_buffer, yaws_buffer)
+            loss_dict = self.alg.update_depth_actor(actions_buffer)
 
             stop = time.time()
             learn_time = stop - start
@@ -415,10 +406,11 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             if self.log_dir is not None and not self.disable_logs:
                 # Log information
                 self.log_vision(locals())
-                if (it-self.start_learning_iteration < 2500 and it % self.save_interval == 0) or \
-                (it-self.start_learning_iteration < 5000 and it % (2*self.save_interval) == 0) or \
-                (it-self.start_learning_iteration >= 5000 and it % (5*self.save_interval) == 0):
-                        self.save(os.path.join(self.log_dir, f"model_{it}.pt"))
+                # 예전에는 초반을 촘촘히 찍는 3단 계단이었지만, 이제는 save_interval
+                # 하나로 균일하게 찍는다 (cfg 기본값 1000 -> model_0, 1000, ... 4000).
+                # 마지막 iteration 은 루프를 빠져나온 뒤 model_4999.pt 로 따로 저장된다.
+                if it % self.save_interval == 0:
+                    self.save(os.path.join(self.log_dir, f"model_{it}.pt"))
             # Clear episode infos
             ep_infos.clear()
             # Save code state
@@ -470,8 +462,6 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         for key, value in locs["loss_dict"].items():
             self.writer.add_scalar(f"Loss_depth/{key}", value, locs["it"])
         self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, locs["it"])
-        self.writer.add_scalar('Loss_depth/delta_yaw_ok_percent', locs['delta_yaw_ok_percentage'], locs["it"]) 
-
 
         self.writer.add_scalar("Perf/total_fps", fps, locs["it"])
         self.writer.add_scalar("Perf/collection time", locs["collection_time"], locs["it"])
@@ -503,8 +493,6 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                 f"""{str.center(width, ' ')}\n\n"""
                 f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
                     'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
-                f"""{'Delta yaw ok percentage:':>{pad}} {locs['delta_yaw_ok_percentage']:.4f}\n"""
-
             )
             for key, value in locs["loss_dict"].items():
                 log_string += f"""{f'{key}:':>{pad}} {value:.4f}\n"""
@@ -563,13 +551,37 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                 warnings.warn("'depth_encoder_state_dict' key does not exist, not loading depth encoder...")
             else:
                 print("Saved depth encoder detected, loading...")
-                self.alg.depth_encoder.load_state_dict(loaded_dict['depth_encoder_state_dict'])
+                depth_encoder_sd = loaded_dict['depth_encoder_state_dict']
+                # heading 예측을 떼기 전의 student 체크포인트는 output_mlp 가 34 차원
+                # (= depth latent 32 + heading 2) 이다. 지금 모델은 32 차원이라
+                # strict load 가 size mismatch 로 죽는다. 옛 가중치를 재생만이라도
+                # 할 수 있게, 체크포인트의 헤드 폭을 읽어 그 폭으로 되돌린 뒤 싣는다.
+                # 추론부는 앞 32 차원만 latent 로 쓰고 남는 2 차원은 폭 기준으로 분기한다.
+                # 학습은 teacher 체크포인트(= 이 키 자체가 없음)에서 시작하므로 무관하다.
+                head = self.alg.depth_encoder.output_mlp[0]
+                ckpt_out_dim = depth_encoder_sd['output_mlp.0.weight'].shape[0]
+                if ckpt_out_dim != head.out_features:
+                    print(
+                        f"Legacy depth encoder head detected ({ckpt_out_dim} != {head.out_features}),"
+                        " restoring the checkpoint's output width for replay..."
+                    )
+                    self.alg.depth_encoder.output_mlp[0] = nn.Linear(head.in_features, ckpt_out_dim).to(
+                        head.weight.device
+                    )
+                self.alg.depth_encoder.load_state_dict(depth_encoder_sd)
             if 'depth_actor_state_dict' in loaded_dict:
                 print("Saved depth actor detected, loading...")
                 self.alg.depth_actor.load_state_dict(loaded_dict['depth_actor_state_dict'])
             else:
                 print("No saved depth actor, Copying actor critic actor to depth actor...")
                 self.alg.depth_actor.load_state_dict(self.alg.policy.actor.state_dict())
+                # teacher 체크포인트에서 distillation 을 시작하는 경로다. teacher 의
+                # 'iter' (예: 14999) 를 그대로 물려받으면 student 첫 저장이
+                # model_15000.pt 가 되어 버린다. student 학습은 0 부터 새로 센다.
+                # (ActorCriticRMA.load_state_dict 가 항상 True 를 돌려주는 탓에
+                #  아래 resumed_training 분기만으로는 이걸 막을 수 없다.)
+                self.current_learning_iteration = 0
+                loaded_dict["iter"] = 0
 
         if load_optimizer and resumed_training:
             # -- algorithm optimizer

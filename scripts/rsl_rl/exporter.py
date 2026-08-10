@@ -215,7 +215,7 @@ class _ParkourDeployOnnxDepthEncoderExporter(torch.nn.Module):
             opset_version=11,
             verbose=self.verbose,
             input_names=["depth_image","proprioception"],
-            output_names=["depth_latent_and_yaw"],
+            output_names=["depth_latent"],
             dynamic_axes={},
         )
 

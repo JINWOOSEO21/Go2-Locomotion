@@ -55,18 +55,18 @@ class DistillationWithExtractor():
         self.depth_actor = depth_actor
         self.depth_actor_optimizer = optim.Adam([*self.depth_actor.parameters(), *self.depth_encoder.parameters()], lr=depth_encoder_cfg["learning_rate"])
 
-    def update_depth_actor(self, actions_buffer, yaws_buffer):
+    def update_depth_actor(self, actions_buffer):
+        # student 는 더 이상 heading 을 예측하지 않으므로 loss 는 teacher action 을
+        # 얼마나 잘 따라가는지 하나뿐이다. 예전의 yaw_loss 항은 제거했다.
         depth_actor_loss = (actions_buffer).norm(p=2, dim=1).mean()
-        yaw_loss = (yaws_buffer).norm(p=2, dim=1).mean()
 
-        loss = depth_actor_loss + yaw_loss
+        loss = depth_actor_loss
         self.depth_actor_optimizer.zero_grad()
         loss.backward()
         nn.utils.clip_grad_norm_(self.depth_actor.parameters(), self.max_grad_norm)
         self.depth_actor_optimizer.step()
         loss_dict = {
             "depth_actor_loss": depth_actor_loss.item(),
-            "yaw_loss": yaw_loss.item(),
             "total_loss": loss.item(),
         }
         return loss_dict
