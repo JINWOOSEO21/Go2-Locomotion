@@ -23,14 +23,36 @@
               teacher 씬은 학습이 6144 env 라 record_camera 를 상시로 둘 수 없어
               None 으로 비워 두었고, 이 스크립트가 --multicam 일 때만 꽂아 넣는다.
 
-  --with_depth  --multicam 과 같이 쓴다. 정책이 실제로 먹는 depth map 을 각 프레임
-                오른쪽에 붙인다. depth 관측이 있는 student(Distillation) 전용이다.
+  --with_depth  --multicam 과 같이 쓴다. depth map 을 각 프레임 오른쪽에 붙인다.
+                student 는 정책이 실제로 먹는 관측이 그대로 그려진다.
+                teacher 는 depth 관측이 없으므로, student 와 같은 카메라/전처리를
+                녹화용으로만 씬에 꽂아 넣어 "같은 자리에서 보면 이렇게 보인다"를
+                보여 준다 (정책 입력에는 전혀 쓰이지 않는다).
+
+  --with_scandots  --multicam 과 같이 쓴다. teacher 가 실제로 먹는 height scan
+                (obs 의 num_scan=132 구간) 을 로봇 기준 탑뷰 격자로 그려 붙인다.
+                teacher 에게는 이게 "정책이 보는 지형" 그 자체다. --with_depth 의
+                teacher 패널이 정책과 무관한 참고 화면인 것과 대비된다.
+                student 는 이 구간을 depth latent 로 대체해 쓰지 않으므로,
+                student 에서 켜면 "teacher 라면 봤을 값" 을 보여 주는 셈이다.
+                --with_depth 와 같이 주면 RGB | depth | scandots 로 붙는다.
+
+  --preset      PLAY cfg 의 지형 분포를 TERRAIN_PRESETS 의 다른 키로 바꾼다.
+                one_col_per_terrain 로 붙이므로 --num_envs 를 프리셋의 지형 수와
+                같게 주면 지형당 1마리가 된다.
+                  trapezoid_only      : 사다리꼴 램프 + 계단 2종
+                  trapezoid_train_all : 위 2종 + flat 3종 (teacher PLAY 기본값)
 
 사용 예:
   # teacher, 지형 3종 영상 3개
   python scripts/rsl_rl/play.py --headless --multicam \
       --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0 \
       --num_envs 3 --video_length 1000 --out_dir videos/teacher
+
+  # teacher, 램프/계단 2종만 + 정책 입력 scandots 패널, 10초(50fps x 500 step)
+  python scripts/rsl_rl/play.py --headless --multicam --with_scandots \
+      --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0 \
+      --preset trapezoid_only --num_envs 2 --video_length 500
 
   # student, 지형 2종 + depth 패널
   python scripts/rsl_rl/play.py --headless --multicam --with_depth \
@@ -77,8 +99,29 @@ parser.add_argument(
     action="store_true",
     default=False,
     help=(
-        "--multicam only. Paste the depth map the policy actually consumes onto the right of each frame, "
-        "so one video shows the robot and its depth input side by side. Student (distillation) tasks only."
+        "--multicam only. Paste the depth map onto the right of each frame, so one video shows the robot "
+        "and the depth view side by side. For student tasks this is the policy's actual input; for teacher "
+        "tasks a record-only depth camera (same cfg as the student's) is attached to the scene."
+    ),
+)
+parser.add_argument(
+    "--with_scandots",
+    action="store_true",
+    default=False,
+    help=(
+        "--multicam only. Paste the height scan the teacher policy actually consumes (the num_scan "
+        "slice of the observation) onto the right of each frame, drawn as a robot-centred top-down "
+        "grid. Combine with --with_depth to get RGB | depth | scandots side by side."
+    ),
+)
+parser.add_argument(
+    "--preset",
+    type=str,
+    default=None,
+    help=(
+        "Override the PLAY config's terrain distribution with a TERRAIN_PRESETS key "
+        "(e.g. 'trapezoid_only' for ramp + stairs only). Applied with one_col_per_terrain=True, "
+        "so --num_envs equal to the preset's terrain count yields one robot per terrain."
     ),
 )
 parser.add_argument(
@@ -160,7 +203,9 @@ from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.math import quat_from_euler_xyz, quat_mul, wrap_to_pi
 from isaaclab.utils.dict import print_dict
 from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
-from parkour_tasks.default_cfg import RECORD_CAMERA_CFG
+from parkour_isaaclab.terrains.extreme_parkour.config.parkour import apply_terrain_preset
+from parkour_tasks.default_cfg import CAMERA_CFG, RECORD_CAMERA_CFG
+from parkour_tasks.extreme_parkour_task.config.go2.parkour_mdp_cfg import StudentObservationsCfg
 from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
 
 from scripts.rsl_rl.exporter import (
@@ -239,6 +284,56 @@ def apply_record_camera(env_cfg):
         print("[INFO] --multicam: record_camera 가 없어 default_cfg.RECORD_CAMERA_CFG 를 씬에 추가한다.")
 
 
+def apply_terrain_override(env_cfg):
+    """--preset 이 주어지면 PLAY cfg 의 지형 분포를 그 프리셋으로 갈아끼운다.
+
+    one_col_per_terrain=True 로 붙여서 커리큘럼 컬럼→지형 매핑이 1:1 로 떨어지게 한다
+    (PLAY cfg 들이 쓰는 것과 같은 방식). noise_range 도 PLAY 와 같은 값으로 맞춘다.
+    """
+    if not args_cli.preset:
+        return
+    generator = env_cfg.scene.terrain.terrain_generator
+    if generator is None:
+        print("[WARN] --preset: terrain_generator 가 없어 무시한다.")
+        return
+    apply_terrain_preset(
+        generator, args_cli.preset,
+        one_col_per_terrain=True,
+        active_overrides={"noise_range": (0.02, 0.02)},
+    )
+    active = [k for k, v in generator.sub_terrains.items() if v.proportion > 0]
+    print(f"[INFO] --preset {args_cli.preset}: 지형 {active} (num_cols={generator.num_cols})")
+    if args_cli.num_envs != len(active):
+        print(
+            f"[WARN] --num_envs {args_cli.num_envs} != 지형 수 {len(active)}. "
+            "지형당 1마리를 원하면 --num_envs 를 지형 수와 같게 줄 것."
+        )
+
+
+def apply_depth_camera(env_cfg):
+    """--with_depth 인데 씬에 depth 관측이 없으면(=teacher) 녹화용으로 꽂아 넣는다.
+
+    teacher 는 depth 를 아예 안 보는 정책이라 씬에도 관측에도 카메라가 없다. 그래서
+    student 와 똑같은 CAMERA_CFG(RayCasterCamera) + image_features 관측군을 여기서
+    붙여 "로봇 머리 위치에서 보면 이렇게 보인다"를 영상에 같이 남긴다. 관측군 이름이
+    policy 가 아니므로 정책 입력에는 절대 섞이지 않는다 (wrapper 는 policy 군만 읽는다).
+
+    RayCasterCamera 는 mesh raycast 라 RTX 렌더를 추가로 돌리지 않는다. env 2~3 대
+    규모에서는 비용이 사실상 없다.
+    """
+    if not (args_cli.with_depth and args_cli.multicam):
+        return
+    if getattr(env_cfg.scene, "depth_camera", None) is not None:
+        return
+    env_cfg.scene.depth_camera = copy.deepcopy(CAMERA_CFG)
+    env_cfg.scene.depth_camera.update_period = env_cfg.sim.dt * env_cfg.decimation
+    obs_cfg = copy.deepcopy(StudentObservationsCfg.DepthCameraPolicyCfg())
+    # 헤드리스에서 cv2 창을 띄우려다 경고만 남긴다. 녹화에는 필요 없다.
+    obs_cfg.depth_cam.params["debug_vis"] = False
+    env_cfg.observations.depth_camera = obs_cfg
+    print("[INFO] --with_depth: 씬에 depth 관측이 없어 녹화 전용 depth 카메라를 추가한다 (정책 입력 아님).")
+
+
 def main():
     """Play with RSL-RL agent."""
     # parse configuration
@@ -248,6 +343,8 @@ def main():
     apply_spawn_rotation(env_cfg)
     apply_spawn_offset(env_cfg)
     apply_record_camera(env_cfg)
+    apply_terrain_override(env_cfg)
+    apply_depth_camera(env_cfg)
     agent_cfg: ParkourRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
     # specify directory for logging experiments
@@ -333,14 +430,24 @@ def main():
         else:
             print("[WARN] --fixed_heading 은 student(Distillation) 정책 전용이다. 이 태스크에서는 무시된다.")
 
-    # depth 패널은 student 정책일 때만 의미가 있다. teacher 는 depth 관측 자체가 없다.
-    record_depth = bool(args_cli.with_depth and args_cli.multicam and is_distill)
+    record_depth = bool(args_cli.with_depth and args_cli.multicam)
     if args_cli.with_depth and not args_cli.multicam:
         print("[WARN] --with_depth 는 --multicam 과 같이 써야 한다. 무시한다.")
-    elif args_cli.with_depth and not is_distill:
-        print("[WARN] --with_depth 는 student(Distillation) 태스크 전용이다. depth 없이 녹화한다.")
+        record_depth = False
     if record_depth:
-        print("[INFO] --with_depth: 각 프레임 오른쪽에 정책 입력 depth map 을 붙인다.")
+        what = "정책 입력" if is_distill else "녹화 전용(정책 입력 아님)"
+        print(f"[INFO] --with_depth: 각 프레임 오른쪽에 {what} depth map 을 붙인다.")
+
+    record_scandots = bool(args_cli.with_scandots and args_cli.multicam)
+    if args_cli.with_scandots and not args_cli.multicam:
+        print("[WARN] --with_scandots 는 --multicam 과 같이 써야 한다. 무시한다.")
+        record_scandots = False
+    if record_scandots:
+        # student 는 actor 에 scandots_latent 를 직접 넘기므로 obs 의 scan 구간을
+        # 쓰지 않는다 (actor_critic_with_encoder 가 latent 가 주어지면 scan encoder
+        # 를 건너뛴다). 그래도 관측 자체는 계산돼 들어 있어서 그릴 수는 있다.
+        what = "정책 입력" if not is_distill else "참고용(student 는 depth latent 로 대체)"
+        print(f"[INFO] --with_scandots: 각 프레임 오른쪽에 {what} scandots 격자를 붙인다.")
 
     robot = env.unwrapped.scene["robot"]
 
@@ -357,6 +464,16 @@ def main():
     if args_cli.multicam:
         out_dir = args_cli.out_dir or os.path.join(os.path.dirname(resume_path), "videos", "multicam")
         recorder = PerEnvVideoRecorder(env, out_dir, fps=args_cli.fps)
+        if record_scandots:
+            grid = recorder.scandots_grid
+            # 센서 격자와 obs 의 scan 폭이 어긋나면 reshape 이 녹화 도중에 터진다.
+            # 그러면 mp4 가 close 되기 전에 죽으므로 여기서 미리 끈다.
+            if grid is None or grid[0] * grid[1] != num_scan:
+                print(
+                    f"[WARN] --with_scandots: height_scanner 격자 {grid} 가 num_scan={num_scan} 과 "
+                    "맞지 않는다. scandots 패널을 끈다."
+                )
+                record_scandots = False
 
     timestep = 0
     depth_camera = None
@@ -368,6 +485,9 @@ def main():
             start_time = time.time()
             # run everything in inference mode
             if agent_cfg.algorithm.class_name != "DistillationWithExtractor":
+                # teacher 는 depth 를 안 먹지만, --with_depth 면 녹화용 관측군이 붙어 있다.
+                if record_depth:
+                    depth_camera = extras["observations"]["depth_camera"].to(env.device)
                 with torch.inference_mode():
                     # agent stepping
                     obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = estimator.inference(obs[:, :num_prop])
@@ -406,6 +526,11 @@ def main():
                         obs[:, 6:8] = 1.5*yaw
                     # obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = estimator.inference(obs[:, :num_prop])
                     actions = policy(obs, hist_encoding=True, scandots_latent=depth_latent)
+            # env.step 이 obs 를 갈아끼우므로, 방금 정책에 넣은 scan 구간을 먼저 떠 둔다.
+            # depth 쪽과 마찬가지로 "이 프레임의 행동을 만든 입력"을 그려야 한다.
+            scandots_np = (
+                obs[:, num_prop:num_prop + num_scan].detach().cpu().numpy() if record_scandots else None
+            )
             # 스텝 중에 렌더가 일어나므로 그 전에 카메라를 현재 로봇 위치로 옮겨둔다.
             if recorder is not None:
                 recorder.track_camera()
@@ -415,7 +540,7 @@ def main():
                 # 정책 호출에 쓴 것과 같은 텐서를 그대로 그린다. 버퍼가 5 스텝마다 갱신되므로
                 # 사이 스텝에서는 직전 프레임이 유지되는데, 그게 정책이 보고 있는 실제 입력이다.
                 depth_np = depth_camera.detach().cpu().numpy() if record_depth else None
-                if not recorder.capture(depth=depth_np):
+                if not recorder.capture(depth=depth_np, scandots=scandots_np):
                     # 아직 카메라 출력이 안 나왔다. 프레임 수로 세지 않는다.
                     continue
 
