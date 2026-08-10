@@ -20,7 +20,7 @@ import torch
 
 import imageio.v2 as imageio
 
-from scripts.rsl_rl.video_overlay import depth_to_panel
+from scripts.rsl_rl.video_overlay import depth_to_panel, scandots_to_panel
 
 
 def resolve_terrain_names(env) -> list[str]:
@@ -52,6 +52,39 @@ def resolve_terrain_names(env) -> list[str]:
         keys[int(np.min(np.where(i / num_cols + 0.001 < np.cumsum(props))[0]))] for i in range(num_cols)
     ]
     return [col_names[t] for t in types]
+
+
+def resolve_scandots_grid(env):
+    """height_scanner 설정에서 scandots 격자 모양과 로봇이 놓인 칸을 계산한다.
+
+    관측의 132 개 값은 GridPatternCfg 가 만든 광선 순서 그대로다. 그 순서는
+    ordering="xy" 기준 ``y_idx * n_x + x_idx`` 이므로, 화면에 격자로 되돌리려면
+    (n_y, n_x) 를 알아야 한다. 둘 다 size/resolution 에서 나온다.
+
+        n_x = size[0] / resolution + 1,  n_y = size[1] / resolution + 1
+
+    로봇 base 가 격자의 어디인지도 같이 낸다. 격자는 센서 원점 기준으로
+    -size/2 .. +size/2 인데 센서에는 offset(현재 x=+0.375m) 이 걸려 있어
+    격자 중심이 로봇보다 앞에 있다. base 는 격자 좌표로 (-offset) 위치다.
+
+    Returns:
+        ((n_y, n_x), (y_idx, x_idx)) 또는 센서가 없으면 (None, None).
+    """
+    try:
+        pattern = env.unwrapped.scene.sensors["height_scanner"].cfg.pattern_cfg
+        offset = env.unwrapped.scene.sensors["height_scanner"].cfg.offset.pos
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] height_scanner 조회 실패, scandots 패널을 끈다: {exc!r}")
+        return None, None
+
+    res = float(pattern.resolution)
+    size_x, size_y = float(pattern.size[0]), float(pattern.size[1])
+    n_x = int(round(size_x / res)) + 1
+    n_y = int(round(size_y / res)) + 1
+    # 격자 좌표계 원점은 -size/2 이고, 로봇은 센서 원점에서 -offset 만큼 뒤/옆이다.
+    x_idx = (size_x / 2.0 - float(offset[0])) / res
+    y_idx = (size_y / 2.0 - float(offset[1])) / res
+    return (n_y, n_x), (y_idx, x_idx)
 
 
 class PerEnvVideoRecorder:
@@ -86,6 +119,10 @@ class PerEnvVideoRecorder:
             print(f"[INFO] env {i} -> {name} -> {path}", flush=True)
         self.written = 0
 
+        # scandots 패널용 격자 정보. 센서가 없으면 None 이고 capture 에서 건너뛴다.
+        self.scandots_grid, self.scandots_robot_cell = resolve_scandots_grid(env)
+        self._warned_no_grid = False
+
     def track_camera(self):
         """로봇 위치 + 고정 오프셋에서 로봇을 바라보게 카메라를 옮긴다.
 
@@ -94,12 +131,16 @@ class PerEnvVideoRecorder:
         target = self.robot.data.root_pos_w
         self.camera.set_world_poses_from_view(eyes=target + self.cam_offset, targets=target)
 
-    def capture(self, depth=None) -> bool:
+    def capture(self, depth=None, scandots=None) -> bool:
         """현재 카메라 출력에서 env 별로 한 프레임씩 쓴다. 쓸 게 없으면 False.
 
         Args:
             depth: (num_envs, ...) 모양의 depth 텐서/배열. 주면 각 프레임 오른쪽에
-                depth 패널을 붙인다 (play.py --with_depth). None 이면 RGB 만 쓴다.
+                depth 패널을 붙인다 (play.py --with_depth). None 이면 안 붙인다.
+            scandots: (num_envs, num_scan) 모양의 height scan. 주면 그 오른쪽에
+                탑뷰 격자 패널을 붙인다 (play.py --with_scandots).
+
+        둘 다 주면 RGB | depth | scandots 순으로 가로로 붙는다.
         """
         rgb = self.camera.data.output["rgb"]
         if rgb is None:
@@ -108,11 +149,26 @@ class PerEnvVideoRecorder:
         if frames.dtype != np.uint8:
             # float 로 나오는 경우 0..1 로 보고 변환한다.
             frames = np.clip(frames * 255.0, 0, 255).astype(np.uint8)
+        if scandots is not None and self.scandots_grid is None:
+            if not self._warned_no_grid:
+                print("[WARN] scandots 격자를 못 구해서 패널을 생략한다.", flush=True)
+                self._warned_no_grid = True
+            scandots = None
         for i, w in enumerate(self.writers):
             frame = frames[i]
+            panels = [frame]
             if depth is not None:
-                frame = np.hstack([frame, depth_to_panel(depth[i], frame.shape[0])])
-            w.append_data(frame)
+                panels.append(depth_to_panel(depth[i], frame.shape[0]))
+            if scandots is not None:
+                panels.append(
+                    scandots_to_panel(
+                        scandots[i],
+                        frame.shape[0],
+                        self.scandots_grid,
+                        robot_cell=self.scandots_robot_cell,
+                    )
+                )
+            w.append_data(np.hstack(panels) if len(panels) > 1 else frame)
         self.written += 1
         return True
 

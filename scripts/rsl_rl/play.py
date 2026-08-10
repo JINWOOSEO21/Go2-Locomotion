@@ -29,6 +29,14 @@
                 녹화용으로만 씬에 꽂아 넣어 "같은 자리에서 보면 이렇게 보인다"를
                 보여 준다 (정책 입력에는 전혀 쓰이지 않는다).
 
+  --with_scandots  --multicam 과 같이 쓴다. teacher 가 실제로 먹는 height scan
+                (obs 의 num_scan=132 구간) 을 로봇 기준 탑뷰 격자로 그려 붙인다.
+                teacher 에게는 이게 "정책이 보는 지형" 그 자체다. --with_depth 의
+                teacher 패널이 정책과 무관한 참고 화면인 것과 대비된다.
+                student 는 이 구간을 depth latent 로 대체해 쓰지 않으므로,
+                student 에서 켜면 "teacher 라면 봤을 값" 을 보여 주는 셈이다.
+                --with_depth 와 같이 주면 RGB | depth | scandots 로 붙는다.
+
   --preset      PLAY cfg 의 지형 분포를 TERRAIN_PRESETS 의 다른 키로 바꾼다.
                 one_col_per_terrain 로 붙이므로 --num_envs 를 프리셋의 지형 수와
                 같게 주면 지형당 1마리가 된다.
@@ -41,8 +49,8 @@
       --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0 \
       --num_envs 3 --video_length 1000 --out_dir videos/teacher
 
-  # teacher, 램프/계단 2종만 + depth 패널, 10초(50fps x 500 step)
-  python scripts/rsl_rl/play.py --headless --multicam --with_depth \
+  # teacher, 램프/계단 2종만 + 정책 입력 scandots 패널, 10초(50fps x 500 step)
+  python scripts/rsl_rl/play.py --headless --multicam --with_scandots \
       --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0 \
       --preset trapezoid_only --num_envs 2 --video_length 500
 
@@ -94,6 +102,16 @@ parser.add_argument(
         "--multicam only. Paste the depth map onto the right of each frame, so one video shows the robot "
         "and the depth view side by side. For student tasks this is the policy's actual input; for teacher "
         "tasks a record-only depth camera (same cfg as the student's) is attached to the scene."
+    ),
+)
+parser.add_argument(
+    "--with_scandots",
+    action="store_true",
+    default=False,
+    help=(
+        "--multicam only. Paste the height scan the teacher policy actually consumes (the num_scan "
+        "slice of the observation) onto the right of each frame, drawn as a robot-centred top-down "
+        "grid. Combine with --with_depth to get RGB | depth | scandots side by side."
     ),
 )
 parser.add_argument(
@@ -420,6 +438,17 @@ def main():
         what = "정책 입력" if is_distill else "녹화 전용(정책 입력 아님)"
         print(f"[INFO] --with_depth: 각 프레임 오른쪽에 {what} depth map 을 붙인다.")
 
+    record_scandots = bool(args_cli.with_scandots and args_cli.multicam)
+    if args_cli.with_scandots and not args_cli.multicam:
+        print("[WARN] --with_scandots 는 --multicam 과 같이 써야 한다. 무시한다.")
+        record_scandots = False
+    if record_scandots:
+        # student 는 actor 에 scandots_latent 를 직접 넘기므로 obs 의 scan 구간을
+        # 쓰지 않는다 (actor_critic_with_encoder 가 latent 가 주어지면 scan encoder
+        # 를 건너뛴다). 그래도 관측 자체는 계산돼 들어 있어서 그릴 수는 있다.
+        what = "정책 입력" if not is_distill else "참고용(student 는 depth latent 로 대체)"
+        print(f"[INFO] --with_scandots: 각 프레임 오른쪽에 {what} scandots 격자를 붙인다.")
+
     robot = env.unwrapped.scene["robot"]
 
     dt = env.unwrapped.step_dt
@@ -435,6 +464,16 @@ def main():
     if args_cli.multicam:
         out_dir = args_cli.out_dir or os.path.join(os.path.dirname(resume_path), "videos", "multicam")
         recorder = PerEnvVideoRecorder(env, out_dir, fps=args_cli.fps)
+        if record_scandots:
+            grid = recorder.scandots_grid
+            # 센서 격자와 obs 의 scan 폭이 어긋나면 reshape 이 녹화 도중에 터진다.
+            # 그러면 mp4 가 close 되기 전에 죽으므로 여기서 미리 끈다.
+            if grid is None or grid[0] * grid[1] != num_scan:
+                print(
+                    f"[WARN] --with_scandots: height_scanner 격자 {grid} 가 num_scan={num_scan} 과 "
+                    "맞지 않는다. scandots 패널을 끈다."
+                )
+                record_scandots = False
 
     timestep = 0
     depth_camera = None
@@ -487,6 +526,11 @@ def main():
                         obs[:, 6:8] = 1.5*yaw
                     # obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = estimator.inference(obs[:, :num_prop])
                     actions = policy(obs, hist_encoding=True, scandots_latent=depth_latent)
+            # env.step 이 obs 를 갈아끼우므로, 방금 정책에 넣은 scan 구간을 먼저 떠 둔다.
+            # depth 쪽과 마찬가지로 "이 프레임의 행동을 만든 입력"을 그려야 한다.
+            scandots_np = (
+                obs[:, num_prop:num_prop + num_scan].detach().cpu().numpy() if record_scandots else None
+            )
             # 스텝 중에 렌더가 일어나므로 그 전에 카메라를 현재 로봇 위치로 옮겨둔다.
             if recorder is not None:
                 recorder.track_camera()
@@ -496,7 +540,7 @@ def main():
                 # 정책 호출에 쓴 것과 같은 텐서를 그대로 그린다. 버퍼가 5 스텝마다 갱신되므로
                 # 사이 스텝에서는 직전 프레임이 유지되는데, 그게 정책이 보고 있는 실제 입력이다.
                 depth_np = depth_camera.detach().cpu().numpy() if record_depth else None
-                if not recorder.capture(depth=depth_np):
+                if not recorder.capture(depth=depth_np, scandots=scandots_np):
                     # 아직 카메라 출력이 안 나왔다. 프레임 수로 세지 않는다.
                     continue
 
