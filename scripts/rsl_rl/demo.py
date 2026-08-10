@@ -755,13 +755,16 @@ def run_loop(demo_go2, obs, extras, num_prop, num_scan, num_priv_explicit):
                 if depth_latent is None or demo_go2.env.unwrapped.common_step_counter % 5 == 0:
                     obs_student = obs[:, :num_prop].clone()
                     obs_student[:, 6:8] = 0
-                    depth_latent_and_yaw = demo_go2.depth_encoder(depth_camera, obs_student)
-                    depth_latent = depth_latent_and_yaw[:, :-2]
-                    depth_yaw = depth_latent_and_yaw[:, -2:]
-                # depth 인코더는 scandots latent 와 yaw 예측을 함께 뱉는다. latent 는
-                # 정책에 그대로 필요하지만, yaw 예측은 사용자 입력으로 대체되므로 쓰지 않는다.
+                    depth_encoder_out = demo_go2.depth_encoder(depth_camera, obs_student)
+                    # 지금 encoder 는 depth embedding 32 차원만 낸다. heading 을 같이
+                    # 예측하던 시절의 체크포인트만 34 차원이라, 폭으로 갈라 준다.
+                    depth_latent = depth_encoder_out[:, :32]
+                    depth_yaw = depth_encoder_out[:, 32:] if depth_encoder_out.shape[1] > 32 else None
+                # latent 는 정책에 그대로 필요하다. 구 체크포인트의 yaw 예측은 어차피
+                # 아래 teleop 입력으로 덮이지만, 조종을 안 붙인 경우를 위해 그대로 둔다.
                 # 갱신이 없는 스텝에서는 직전 값을 그대로 쓴다(play.py 와 동일).
-                obs[:, 6:8] = 1.5 * depth_yaw
+                if depth_yaw is not None:
+                    obs[:, 6:8] = 1.5 * depth_yaw
                 demo_go2.apply_teleop_yaw(obs)
                 action = demo_go2.policy(obs, hist_encoding=True, scandots_latent=depth_latent)
             demo_go2.track_record_camera()

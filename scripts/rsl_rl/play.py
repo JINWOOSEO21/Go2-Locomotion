@@ -329,7 +329,7 @@ def main():
     is_distill = agent_cfg.algorithm.class_name == "DistillationWithExtractor"
     if args_cli.fixed_heading:
         if is_distill:
-            print("[INFO] --fixed_heading: depth encoder 의 heading 예측 대신 월드 +X 방향을 목표로 삼는다.")
+            print("[INFO] --fixed_heading: 관측의 oracle heading 대신 월드 +X 방향을 목표로 삼는다.")
         else:
             print("[WARN] --fixed_heading 은 student(Distillation) 정책 전용이다. 이 태스크에서는 무시된다.")
 
@@ -379,13 +379,16 @@ def main():
                     if env.unwrapped.common_step_counter %5 == 0:
                         obs_student = obs[:, :num_prop].clone()
                         obs_student[:, 6:8] = 0
-                        depth_latent_and_yaw = depth_encoder(depth_camera, obs_student)
-                        depth_latent = depth_latent_and_yaw[:, :-2]
-                        yaw = depth_latent_and_yaw[:, -2:]
+                        depth_encoder_out = depth_encoder(depth_camera, obs_student)
+                        # 지금 encoder 는 depth embedding 32 차원만 낸다. heading 을
+                        # 예측하던 시절의 체크포인트는 34 차원이라 뒤 2 개가 더 붙는데,
+                        # 그건 재생 호환을 위해 폭으로 갈라서 예전처럼 obs 에 덮어쓴다.
+                        depth_latent = depth_encoder_out[:, :32]
+                        yaw = depth_encoder_out[:, 32:] if depth_encoder_out.shape[1] > 32 else None
                     if args_cli.fixed_heading:
                         # obs index 6,7 은 원래 delta_yaw / delta_next_yaw, 즉
                         #   (goal point 방향의 월드 각도) - (로봇의 현재 진행 각도)
-                        # 다. 여기서는 depth encoder 가 추정한 heading(yaw)을 쓰지 않고,
+                        # 다. 여기서는 관측이 주는 oracle heading 을 쓰지 않고,
                         # goal 방향을 월드 앞 방향(+X, 각도 0)으로 고정해 같은 식으로 계산한다.
                         #
                         # heading_w = atan2(forward_w.y, forward_w.x) 로, 관측 코드가 쓰는
@@ -397,7 +400,9 @@ def main():
                         delta = wrap_to_pi(0.0 - robot.data.heading_w)
                         obs[:, 6] = 1.5 * delta
                         obs[:, 7] = 1.5 * delta
-                    else:
+                    elif yaw is not None:
+                        # 34 차원 구 체크포인트 전용 경로. 새 정책은 teacher 와 똑같이
+                        # obs 의 oracle heading 을 그대로 쓰므로 여기서 덮어쓰지 않는다.
                         obs[:, 6:8] = 1.5*yaw
                     # obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = estimator.inference(obs[:, :num_prop])
                     actions = policy(obs, hist_encoding=True, scandots_latent=depth_latent)

@@ -147,7 +147,14 @@ def main(env_cfg: ParkourManagerBasedRLEnv |ManagerBasedRLEnvCfg | DirectRLEnvCf
     print(f"Exact experiment name requested from command line: {log_dir}")
     if agent_cfg.run_name:
         log_dir += f"_{agent_cfg.run_name}"
-        
+
+    # run_subdir 는 쓰기 경로에만 끼운다. 아래 get_checkpoint_path 의 뿌리는 여전히
+    # log_root_path 라서, student 산출물을 student_pretrained/ 아래로 모으면서도
+    # load_run="teacher_pretrained" 로 teacher 체크포인트를 그대로 찾아온다.
+    run_subdir = getattr(agent_cfg, "run_subdir", None)
+    if run_subdir:
+        log_dir = os.path.join(run_subdir, log_dir)
+
     log_dir = os.path.join(log_root_path, log_dir)
 
     # create isaac environment
@@ -159,7 +166,22 @@ def main(env_cfg: ParkourManagerBasedRLEnv |ManagerBasedRLEnvCfg | DirectRLEnvCf
     
     # save resume path before creating a new log_dir
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "DistillationWithExtractor":
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        load_run, load_checkpoint = agent_cfg.load_run, agent_cfg.load_checkpoint
+        # distillation 의 출발점은 teacher 다. agent_cfg.load_run 은 play/evaluation 이
+        # 집어올 student 를 가리키므로 그대로 쓰면 student 를 이어 학습하게 된다.
+        # --resume 으로 student 학습을 이어가는 경우와 --load_run 을 손으로 준 경우는
+        # 사용자의 지정이 이기게 둔다.
+        if (
+            agent_cfg.algorithm.class_name == "DistillationWithExtractor"
+            and not agent_cfg.resume
+            and args_cli.load_run is None
+            and getattr(agent_cfg, "distill_load_run", None)
+        ):
+            load_run = agent_cfg.distill_load_run
+            if args_cli.checkpoint is None and agent_cfg.distill_load_checkpoint:
+                load_checkpoint = agent_cfg.distill_load_checkpoint
+            print(f"[INFO] Distillation source (teacher): run='{load_run}', checkpoint='{load_checkpoint}'")
+        resume_path = get_checkpoint_path(log_root_path, load_run, load_checkpoint)
 
     # # wrap for video recording
     if args_cli.video:

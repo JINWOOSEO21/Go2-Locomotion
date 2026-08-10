@@ -218,30 +218,6 @@ class image_features(ManagerTermBase):
         return depth_image[:-2, 4:-4]
 
     def _normalize_depth_image(self, depth_image):
-        depth_image = depth_image  # make similiar to scandot 
+        depth_image = depth_image  # make similiar to scandot
         depth_image = (depth_image) / (self.clipping_range)  - 0.5
         return depth_image
-    
-class obervation_delta_yaw_ok(ManagerTermBase):
-
-    def __init__(self, cfg: ObservationTermCfg, env: ParkourManagerBasedRLEnv):
-        super().__init__(cfg, env)
-        self.delta_yaw = torch.zeros(self.num_envs, device=self.device)
-
-    def __call__(
-        self,
-        env: ParkourManagerBasedRLEnv,    
-        parkour_name: str,
-        threshold: float,
-        asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    ):
-        if env.common_step_counter % 5 == 0:
-            parkour_event: ParkourEvent =  env.parkour_manager.get_term(parkour_name)
-            asset: Articulation = env.scene[asset_cfg.name]
-            _, _, yaw = euler_xyz_from_quat(asset.data.root_quat_w)
-            self.delta_yaw = parkour_event.target_yaw - wrap_to_pi(yaw)
-        # IsaacLab 2.3 의 ObservationManager 는 배치 차원을 뗀 뒤(obs_dims[1:]) 남는 차원으로
-        # concatenate 축을 계산한다. (num_envs,) 를 그대로 돌려주면 남는 차원이 () 라
-        # term_dims 가 (N, 0) 이 되어 IndexError 가 난다. (num_envs, 1) 로 맞춰준다.
-        # 소비하는 쪽(on_policy_runner_with_extractor)은 1-D 마스크를 기대하므로 거기서 편다.
-        return (self.delta_yaw < threshold).unsqueeze(-1)

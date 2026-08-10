@@ -79,3 +79,25 @@ class ParkourRslRlOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
     depth_encoder: ParkourRslRlDepthEncoderCfg | None = None
     algorithm: ParkourRslRlPpoAlgorithmCfg | ParkourRslRlDistillationAlgorithmCfg = MISSING
 
+    distill_load_run: str | None = None
+    """distillation 출발점(teacher)이 있는 run 폴더. None 이면 load_run 을 쓴다.
+
+    load_run 은 play/evaluation 이 집어올 student 체크포인트를 가리켜야 하므로,
+    학습 출발점을 그쪽에 겹쳐 쓰면 student 를 이어 학습하게 된다. 그래서 분리했다.
+    algorithm.class_name == "DistillationWithExtractor" 이고 --resume 이 아닐 때만 쓰인다.
+    """
+
+    distill_load_checkpoint: str | None = None
+    """distillation 출발점 체크포인트 파일명. None 이면 load_checkpoint 를 쓴다."""
+
+    run_subdir: str | None = None
+    """산출물을 담을 중간 폴더. None 이면 기존대로
+    logs/rsl_rl/<experiment_name>/<timestamp> 에 쓴다.
+
+    체크포인트를 찾는 뿌리(get_checkpoint_path 의 log_root_path)는 그대로
+    logs/rsl_rl/<experiment_name> 이고 이 값은 쓰기 경로에만 끼워 넣는다.
+    student distillation 은 "student_pretrained" 를 넣어
+    logs/rsl_rl/<experiment_name>/student_pretrained/<timestamp> 로 떨어뜨리면서도
+    teacher 체크포인트(load_run="teacher_pretrained")를 그대로 찾아올 수 있다.
+    """
+
