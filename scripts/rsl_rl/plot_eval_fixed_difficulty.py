@@ -91,40 +91,68 @@ def build_summary(df: pd.DataFrame, raw_cols: list[str]) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("iteration").reset_index(drop=True)
 
 
-def plot_reward(summary: pd.DataFrame, meta: dict, path: str):
-    fig, ax = plt.subplots(figsize=(9, 5), dpi=160)
-    fig.patch.set_facecolor(SURFACE)
-    style_axes(ax)
+SERIES_SPEC = [
+    ("success", "완주한 에피소드만", SERIES[0]),
+    ("all", "전체 에피소드", SERIES[1]),
+]
 
+
+def _draw_reward(ax, summary: pd.DataFrame, legend: bool):
     x = summary["iteration"].to_numpy()
-    series = [
-        ("success", "완주한 에피소드만", SERIES[0]),
-        ("all", "전체 에피소드", SERIES[1]),
-    ]
-    for key, label, color in series:
+    for key, label, color in SERIES_SPEC:
         y = summary[f"rew_per_s_{key}_mean"].to_numpy()
         ci = summary[f"rew_per_s_{key}_ci95"].to_numpy()
         ax.fill_between(x, y - ci, y + ci, color=color, alpha=0.15, linewidth=0)
         ax.plot(x, y, color=color, linewidth=2.0, marker="o", markersize=5.5,
                 markeredgecolor=SURFACE, markeredgewidth=1.2, label=label)
+    ax.set_ylabel("reward [1/s]", color=INK_MUTED, fontsize=10)
+    if legend:
+        leg = ax.legend(frameon=False, fontsize=10, loc="lower right")
+        for text in leg.get_texts():
+            text.set_color(INK)
+
+
+def plot_reward(summary: pd.DataFrame, meta: dict, path: str):
+    # 초기 체크포인트가 y 범위를 통째로 잡아먹어서 정작 보고 싶은 수렴 구간이
+    # 납작해진다. 전체 곡선과 확대 곡선을 위아래로 같이 둔다.
+    zoom_from = summary.loc[summary["iteration"] > 0, "iteration"]
+    zoomed = summary[summary["iteration"] >= (zoom_from.min() if len(zoom_from) else 0)]
+    two_panel = len(zoomed) >= 3 and len(zoomed) < len(summary)
+
+    if two_panel:
+        fig, axes = plt.subplots(2, 1, figsize=(9, 8), dpi=160)
+    else:
+        fig, ax_single = plt.subplots(figsize=(9, 5), dpi=160)
+        axes = [ax_single]
+    fig.patch.set_facecolor(SURFACE)
+    for ax in axes:
+        style_axes(ax)
+
+    _draw_reward(axes[0], summary, legend=True)
 
     difficulty = meta.get("difficulty", "?")
     terrains = ", ".join(meta.get("active_terrains", []))
-    ax.set_title(
+    axes[0].set_title(
         f"고정 난이도 {difficulty} 에서의 초당 reward (클리핑 이전 가중합)",
         color=INK, fontsize=13, pad=32, loc="left",
     )
-    ax.text(
+    axes[0].text(
         0.0, 1.012,
         f"지형 {terrains} · {meta.get('num_rows')}x{meta.get('num_cols')} 타일 · "
         f"env {meta.get('num_envs')} · seed {meta.get('seed')} · 음영은 95% 신뢰구간",
-        transform=ax.transAxes, color=INK_MUTED, fontsize=9, va="bottom",
+        transform=axes[0].transAxes, color=INK_MUTED, fontsize=9, va="bottom",
     )
-    ax.set_xlabel("학습 iteration", color=INK_MUTED, fontsize=10)
-    ax.set_ylabel("reward [1/s]", color=INK_MUTED, fontsize=10)
-    legend = ax.legend(frameon=False, fontsize=10, loc="lower right")
-    for text in legend.get_texts():
-        text.set_color(INK)
+
+    if two_panel:
+        _draw_reward(axes[1], zoomed, legend=False)
+        axes[1].set_title(
+            f"iteration {int(zoomed['iteration'].min())} 이후 확대 — 수렴 구간",
+            color=INK, fontsize=12, pad=12, loc="left",
+        )
+        axes[1].set_xlabel("학습 iteration", color=INK_MUTED, fontsize=10)
+    else:
+        axes[0].set_xlabel("학습 iteration", color=INK_MUTED, fontsize=10)
+
     fig.tight_layout()
     fig.savefig(path, facecolor=SURFACE)
     plt.close(fig)
