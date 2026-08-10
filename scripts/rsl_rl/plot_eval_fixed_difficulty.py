@@ -160,11 +160,16 @@ def _draw_reward(ax, summary: pd.DataFrame, legend: bool):
             text.set_color(INK)
 
 
-def plot_reward(summary: pd.DataFrame, meta: dict, path: str):
+def plot_reward(summary: pd.DataFrame, meta: dict, path: str, zoom_from: int | None = None):
     # 초기 체크포인트가 y 범위를 통째로 잡아먹어서 정작 보고 싶은 수렴 구간이
     # 납작해진다. 전체 곡선과 확대 곡선을 위아래로 같이 둔다.
-    zoom_from = summary.loc[summary["iteration"] > 0, "iteration"]
-    zoomed = summary[summary["iteration"] >= (zoom_from.min() if len(zoom_from) else 0)]
+    #
+    # zoom_from 을 생략하면 iteration 0 만 뺀다. 초반 상승이 여전히 가팔라서
+    # 후반이 눌린다면 더 뒤에서 자르면 된다.
+    if zoom_from is None:
+        positive = summary.loc[summary["iteration"] > 0, "iteration"]
+        zoom_from = int(positive.min()) if len(positive) else 0
+    zoomed = summary[summary["iteration"] >= zoom_from]
     two_panel = len(zoomed) >= 3 and len(zoomed) < len(summary)
 
     if two_panel:
@@ -251,6 +256,18 @@ def plot_diagnostics(summary: pd.DataFrame, meta: dict, path: str):
 def main():
     parser = argparse.ArgumentParser(description="Summarise and plot fixed-difficulty evaluation results.")
     parser.add_argument("--input_dir", type=str, required=True, help="episodes.csv 가 있는 폴더.")
+    parser.add_argument(
+        "--zoom_from",
+        type=int,
+        default=None,
+        help="아래 확대 패널을 시작할 iteration. 생략하면 iteration 0 만 뺀다.",
+    )
+    parser.add_argument(
+        "--reward_out",
+        type=str,
+        default="reward.png",
+        help="reward 그래프 파일명. --zoom_from 을 바꿔 여러 장을 만들 때 쓴다.",
+    )
     args = parser.parse_args()
 
     df = pd.read_csv(os.path.join(args.input_dir, "episodes.csv"))
@@ -280,8 +297,10 @@ def main():
     else:
         print("[WARN] 한글 폰트를 못 찾았다. 그래프의 한글 라벨이 깨질 수 있다.")
 
-    plot_reward(summary, meta, os.path.join(args.input_dir, "reward.png"))
+    reward_path = os.path.join(args.input_dir, args.reward_out)
+    plot_reward(summary, meta, reward_path, zoom_from=args.zoom_from)
     plot_diagnostics(summary, meta, os.path.join(args.input_dir, "diagnostics.png"))
+    print(f"[INFO] {reward_path}")
 
     print(f"[INFO] {summary_path}")
     print(summary[["iteration", "n_episodes", "success_rate",
