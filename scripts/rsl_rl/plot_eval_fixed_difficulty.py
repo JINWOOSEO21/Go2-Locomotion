@@ -35,6 +35,30 @@ INK = "#0b0b0b"
 INK_MUTED = "#52514e"
 GRID = "#dedcd6"
 
+# meta.json 의 terrain_params 를 사람이 읽는 문장으로 바꿀 때 쓰는 표. 여기 없는
+# 필드는 필드명 그대로, 단위 없이 찍힌다 (지형이 늘어도 그래프가 깨지지 않게).
+PARAM_LABEL = {
+    "slope_angle": "경사각",
+    "step_height": "단차",
+    "gap_size": "간격",
+    "hurdle_height_range": "장애물 높이",
+    "incline_height": "경사 높이",
+    "stone_len": "디딤돌 길이",
+}
+PARAM_UNIT = {
+    "slope_angle": "°",
+    "step_height": " m",
+    "gap_size": " m",
+    "hurdle_height_range": " m",
+    "incline_height": " m",
+    "stone_len": " m",
+}
+TERRAIN_LABEL = {
+    "parkour_trapezoid_ramp": "경사로",
+    "parkour_trapezoid_stairs": "계단",
+    "parkour_flat": "평지",
+}
+
 REASON_ORDER = ["goal", "timeout", "fall_roll", "fall_pitch", "height"]
 REASON_LABEL = {
     "goal": "완주 (goal 8/8)",
@@ -43,6 +67,30 @@ REASON_LABEL = {
     "fall_pitch": "전복 (pitch)",
     "height": "추락",
 }
+
+
+def format_value(value) -> str:
+    if isinstance(value, (list, tuple)):
+        return "~".join(f"{float(v):g}" for v in value)
+    return f"{float(value):g}"
+
+
+def terrain_param_line(meta: dict) -> str:
+    """'경사로 경사각 28.9° · 계단 단차 0.176 m' 같은 한 줄을 만든다.
+
+    meta.json 의 terrain_params 는 평가에 쓴 난이도에서 지형 수식을 실제로 푼
+    값이다. 여기서 다시 계산하지 않는다 (계산하려면 Isaac Sim 이 필요하고,
+    그래프와 실제 지형이 어긋날 여지도 생긴다).
+    """
+    params = meta.get("terrain_params") or {}
+    parts = []
+    for terrain, fields in params.items():
+        name = TERRAIN_LABEL.get(terrain, terrain.replace("parkour_", ""))
+        for field, value in fields.items():
+            label = PARAM_LABEL.get(field, field)
+            unit = PARAM_UNIT.get(field, "")
+            parts.append(f"{name} {label} {format_value(value)}{unit}")
+    return " · ".join(parts)
 
 
 def style_axes(ax):
@@ -132,15 +180,22 @@ def plot_reward(summary: pd.DataFrame, meta: dict, path: str):
 
     difficulty = meta.get("difficulty", "?")
     terrains = ", ".join(meta.get("active_terrains", []))
+    param_line = terrain_param_line(meta)
+    subtitle = (
+        f"지형 {terrains} · {meta.get('num_rows')}x{meta.get('num_cols')} 타일 · "
+        f"env {meta.get('num_envs')} · seed {meta.get('seed')} · 음영은 95% 신뢰구간"
+    )
+    if param_line:
+        # 난이도 숫자만 적으면 그게 물리적으로 무엇인지 그래프만 보고는 알 수 없다.
+        subtitle = f"난이도 {difficulty} → {param_line}\n{subtitle}"
     axes[0].set_title(
         f"고정 난이도 {difficulty} 에서의 초당 reward (클리핑 이전 가중합)",
-        color=INK, fontsize=13, pad=32, loc="left",
+        color=INK, fontsize=13, pad=48 if param_line else 32, loc="left",
     )
     axes[0].text(
-        0.0, 1.012,
-        f"지형 {terrains} · {meta.get('num_rows')}x{meta.get('num_cols')} 타일 · "
-        f"env {meta.get('num_envs')} · seed {meta.get('seed')} · 음영은 95% 신뢰구간",
-        transform=axes[0].transAxes, color=INK_MUTED, fontsize=9, va="bottom",
+        0.0, 1.012, subtitle,
+        transform=axes[0].transAxes, color=INK_MUTED, fontsize=9.5, va="bottom",
+        linespacing=1.6,
     )
 
     if two_panel:

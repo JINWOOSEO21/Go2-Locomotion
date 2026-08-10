@@ -155,6 +155,29 @@ def select_checkpoints(checkpoint_dir: str, iterations: str | None, step: int) -
     return [(it, available[it]) for it in sorted(wanted)]
 
 
+def resolve_difficulty_params(sub_cfg, difficulty: float) -> dict:
+    """난이도 수식으로 적힌 지형 파라미터를 이 난이도에서의 실제 값으로 푼다.
+
+    지형 cfg 는 난이도 의존 파라미터를 문자열 수식으로 들고 있고
+    (예: trapezoid ramp 의 slope_angle = '10 + 27*difficulty'), 지형 생성 함수가
+    eval(cfg.<field>, {"difficulty": difficulty}) 로 푼다. 여기서도 같은 방식으로
+    풀어서 meta.json 에 남긴다. 그래야 나중에 그래프만 보고도 '난이도 0.7 이
+    경사 몇 도였나' 를 알 수 있다.
+
+    값을 하드코딩하지 않고 cfg 에서 푸는 이유는, 지형 수식이 바뀌면 그래프의
+    설명도 자동으로 따라가야 하기 때문이다.
+    """
+    resolved = {}
+    for field, value in vars(sub_cfg).items():
+        if isinstance(value, str) and "difficulty" in value:
+            try:
+                resolved[field] = eval(value, {"__builtins__": {}}, {"difficulty": difficulty})
+            except Exception:
+                # 난이도 수식이 아닌 문자열이 우연히 'difficulty' 를 포함할 수 있다.
+                continue
+    return resolved
+
+
 class EpisodeRecorder:
     """에피소드 단위로 reward 항과 종료 상태를 모은다.
 
@@ -310,8 +333,15 @@ def main():
     env_cfg.seed = seed
 
     active_terrains = [k for k, v in generator.sub_terrains.items() if v.proportion > 0]
+    terrain_params = {
+        name: resolve_difficulty_params(generator.sub_terrains[name], args_cli.difficulty)
+        for name in active_terrains
+    }
+    terrain_params = {k: v for k, v in terrain_params.items() if v}
     print(f"[INFO] 난이도 {args_cli.difficulty} 고정, 지형 {active_terrains}, "
           f"{args_cli.num_rows}x{args_cli.num_cols} 타일, seed {seed}")
+    for name, params in terrain_params.items():
+        print(f"[INFO]   {name}: {params}")
 
     env = gym.make(args_cli.task, cfg=env_cfg)
     env = ParkourRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
@@ -356,6 +386,7 @@ def main():
         "difficulty": args_cli.difficulty,
         "terrain_preset": args_cli.preset,
         "active_terrains": active_terrains,
+        "terrain_params": terrain_params,
         "num_rows": args_cli.num_rows,
         "num_cols": args_cli.num_cols,
         "num_envs": args_cli.num_envs,
