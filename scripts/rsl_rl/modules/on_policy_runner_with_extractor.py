@@ -636,6 +636,13 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         놓여 있고 dis_to_start_pos / cur_goal_idx 도 리셋이 0 으로 만들어 둔 뒤다.
         """
         if levels is None:
+            # 이 기능이 들어오기 전에 저장된 체크포인트다. 조용히 넘어가면 커리큘럼이
+            # 바닥부터 다시 올라가는데도 로그에 아무 흔적이 없어, 재개 직후 리워드가
+            # 떨어지는 이유를 나중에 찾기 어렵다.
+            warnings.warn(
+                "checkpoint has no 'terrain_levels' (saved before terrain-curriculum persistence);"
+                " the terrain curriculum restarts from randint(0, max_init_terrain_level + 1)"
+            )
             return
         current = self._get_terrain_levels()
         if current is None:
