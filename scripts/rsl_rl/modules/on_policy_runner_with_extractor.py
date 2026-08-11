@@ -533,6 +533,15 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         terrain_levels = self._get_terrain_levels()
         if terrain_levels is not None:
             saved_dict["terrain_levels"] = terrain_levels.detach().cpu()
+        # -- PPO 의 업데이트 카운터. priv_reg_coef_schedual 이 이 값만 보고 계수를
+        #    올리는데, terrain_levels 와 마찬가지로 모델 밖에 살아서 재개하면 0 으로
+        #    돌아간다. teacher 스케줄 [0, 0.1, 2000, 3000] 기준으로, 복원하지 않으면
+        #    재개 후 2000 iteration 동안 priv_reg_coef 가 0.1 -> 0.0 으로 꺼진다.
+        #    iteration 과 1:1 이 아니다: update() 마다 +1, 20 iteration 마다 도는
+        #    update_dagger() 에서도 +1 이라 iteration 보다 5% 쯤 크다.
+        alg_counter = getattr(self.alg, "counter", None)
+        if alg_counter is not None:
+            saved_dict["alg_counter"] = int(alg_counter)
         # save model
         torch.save(saved_dict, path)
 
@@ -604,10 +613,35 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         # -- load current learning iteration
         if resumed_training:
             self.current_learning_iteration = loaded_dict["iter"]
+            self._restore_alg_counter(loaded_dict)
         # -- 지형 커리큘럼 복원. 모델 로드가 다 끝난 뒤에 한다.
         if restore_terrain_curriculum:
             self._restore_terrain_levels(loaded_dict.get("terrain_levels"))
         return loaded_dict["infos"]
+
+    def _restore_alg_counter(self, loaded_dict):
+        """PPO 업데이트 카운터를 되살린다. priv_reg_coef_schedual 이 이 값만 본다.
+
+        distillation 처럼 iteration 번호를 0 부터 새로 세는 경로에서는 카운터도
+        같이 0 이어야 하므로, 이미 0 으로 맞춰진 loaded_dict['iter'] 를 따른다.
+        """
+        if getattr(self.alg, "counter", None) is None:
+            return  # DistillationWithExtractor 등 카운터가 없는 알고리즘
+        if loaded_dict["iter"] == 0:
+            self.alg.counter = 0
+            return
+        counter = loaded_dict.get("alg_counter")
+        if counter is None:
+            # 이 기능 이전에 저장된 체크포인트. iteration 수로 근사한다. 실제 카운터는
+            # dagger 갱신 때문에 이보다 5% 쯤 크지만, 스케줄이 (counter-2000)/3000 을
+            # 1 로 자르는 구조라 counter 가 5000 만 넘으면 어느 쪽이든 계수는 같다.
+            counter = self.current_learning_iteration
+            warnings.warn(
+                "checkpoint has no 'alg_counter' (saved before counter persistence);"
+                f" approximating it from the iteration number ({counter})"
+            )
+        self.alg.counter = int(counter)
+        print(f"Restored PPO update counter = {self.alg.counter}.")
 
     def _parkour_terms(self):
         """씬에 붙어 있는 파쿠르 이벤트 term 들. 없으면 빈 리스트."""
@@ -636,6 +670,13 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         놓여 있고 dis_to_start_pos / cur_goal_idx 도 리셋이 0 으로 만들어 둔 뒤다.
         """
         if levels is None:
+            # 이 기능이 들어오기 전에 저장된 체크포인트다. 조용히 넘어가면 커리큘럼이
+            # 바닥부터 다시 올라가는데도 로그에 아무 흔적이 없어, 재개 직후 리워드가
+            # 떨어지는 이유를 나중에 찾기 어렵다.
+            warnings.warn(
+                "checkpoint has no 'terrain_levels' (saved before terrain-curriculum persistence);"
+                " the terrain curriculum restarts from randint(0, max_init_terrain_level + 1)"
+            )
             return
         current = self._get_terrain_levels()
         if current is None:
