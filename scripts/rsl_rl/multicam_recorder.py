@@ -23,6 +23,31 @@ import imageio.v2 as imageio
 from scripts.rsl_rl.video_overlay import depth_to_panel, scandots_to_panel
 
 
+def pad_to_even(img: np.ndarray) -> np.ndarray:
+    """가로/세로를 짝수로 맞춘다. 홀수면 오른쪽/아래로 1픽셀 늘린다.
+
+    libx264 는 yuv420p 로 인코딩할 때 크로마를 2x2 로 서브샘플링하므로 프레임의
+    가로·세로가 모두 짝수여야 한다. 홀수면 인코더가 아예 안 열리고
+    ``width not divisible by 2`` 뒤에 ffmpeg 이 죽는데, imageio 쪽에는 그게
+    BrokenPipe 로만 올라와서 원인이 안 보인다.
+
+    패널 폭은 높이에 종횡비를 곱해 나오므로 조합에 따라 홀수가 된다.
+    540 높이 기준으로 RGB(960) | depth(810) 는 1770 이라 우연히 통과하지만,
+    RGB | scandots(495) 는 1455, 셋 다 붙이면 2265 라 홀수다. 패널마다 폭을
+    맞추는 대신 합성이 끝난 최종 프레임에서 한 번만 보정한다. 카메라 해상도나
+    패널 구성이 바뀌어도 여기만 지나면 항상 안전하다.
+
+    자르지 않고 늘리는 이유는 프레임 가장자리 1픽셀이라도 지우면 그게 정책이
+    보는 화면의 일부일 수 있기 때문이다. mode="edge" 라 늘어난 줄은 바로 옆
+    픽셀의 복사본이고 눈에 띄지 않는다.
+    """
+    h, w = img.shape[:2]
+    pad_h, pad_w = h % 2, w % 2
+    if not (pad_h or pad_w):
+        return img
+    return np.pad(img, ((0, pad_h), (0, pad_w), (0, 0)), mode="edge")
+
+
 def resolve_terrain_names(env) -> list[str]:
     """env 별로 배정된 서브지형 이름을 돌려준다.
 
@@ -168,7 +193,7 @@ class PerEnvVideoRecorder:
                         robot_cell=self.scandots_robot_cell,
                     )
                 )
-            w.append_data(np.hstack(panels) if len(panels) > 1 else frame)
+            w.append_data(pad_to_even(np.hstack(panels) if len(panels) > 1 else frame))
         self.written += 1
         return True
 
