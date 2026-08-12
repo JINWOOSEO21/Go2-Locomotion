@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab.sensors import ContactSensor, RayCaster, RayCasterCamera
 from isaaclab.assets import Articulation
-from isaaclab.utils.math  import euler_xyz_from_quat, wrap_to_pi
+from isaaclab.utils.math  import euler_xyz_from_quat, wrap_to_pi, matrix_from_quat, quat_apply
 from parkour_isaaclab.envs.mdp.parkours import ParkourEvent 
 from collections.abc import Sequence
 import numpy as np
@@ -138,6 +138,165 @@ class ExtremeParkourObservations(ManagerTermBase):
     
     def _get_heights(self):
         return torch.clip(self.ray_sensor.data.pos_w[:, 2].unsqueeze(1) - self.ray_sensor.data.ray_hits_w[..., 2] - 0.3, -1, 1).to(self.device)
+
+class elevation_map_scan(ManagerTermBase):
+    """L1 LiDAR → self-hit 필터 → elevation_mapping_cupy → scandots 격자 샘플.
+
+    계획서 docs/emcupy_student_plan.md §2.1 의 파이프라인. depth camera 파이프라인을
+    대체하는 student 전용 관측으로, teacher scandots(obs[53:185])와 같은 위치·같은
+    정규화(clip(base_z − h − 0.3, ±1))의 132-vector 를 낸다. EM tick(= 센서 자연
+    프레임 0.1s, 10Hz)에서만 갱신되고 사이 step 은 최신 값을 그대로 돌려준다.
+    """
+
+    def __init__(self, cfg: ObservationTermCfg, env: ParkourManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        from parkour_isaaclab.sensors import GO2_SELF_FILTER_CAPSULES
+        from parkour_isaaclab.envs.mdp.elevation_map_backend import ElevationMapBackend
+
+        self.env = env
+        self.lidar = env.scene.sensors[cfg.params["sensor_cfg"].name]
+        self.asset: Articulation = env.scene[cfg.params["asset_cfg"].name]
+        self.update_interval = int(cfg.params.get("update_interval", 5))
+        # 노이즈 (계획서 §5 잔여 가정): EM 입력에만 걸리고 policy obs(GT)는 무관.
+        self.odom_pos_std = float(cfg.params.get("odom_pos_std", 0.01))
+        self.odom_rot_std_rad = float(np.deg2rad(cfg.params.get("odom_rot_std_deg", 0.5)))
+        self.range_std = float(cfg.params.get("range_std", 0.02))
+
+        # scandot 격자는 teacher 의 height_scanner 에서 그대로 가져온다 —
+        # ray_starts 는 (base frame) 패턴점 + cfg offset(+0.375m) 이라 순서/위치가
+        # obs 의 scan 구간과 1:1 로 일치한다.
+        scanner: RayCaster = env.scene.sensors["height_scanner"]
+        self._scan_offsets_xy = scanner.ray_starts[0][:, :2].clone().to(self.device)
+        self.num_points = self._scan_offsets_xy.shape[0]
+
+        self.backend = ElevationMapBackend(
+            num_envs=self.num_envs,
+            device=self.device,
+            resolution=float(cfg.params.get("em_resolution", 0.1)),
+            map_length=float(cfg.params.get("em_map_length", 3.2)),
+        )
+
+        # self-filter 캡슐: body 이름 → 인덱스 해석 (센서와 함께 사는 로봇 기하 테이블)
+        self._capsules = []
+        for name_a, off_a, name_b, off_b, radius in GO2_SELF_FILTER_CAPSULES:
+            ia = self.asset.find_bodies(name_a)[0][0]
+            ib = self.asset.find_bodies(name_b)[0][0]
+            self._capsules.append(
+                (
+                    ia,
+                    torch.tensor(off_a, device=self.device),
+                    ib,
+                    torch.tensor(off_b, device=self.device),
+                    float(radius),
+                )
+            )
+        # 마운트 회전 (GO2_LIDAR_CFG.offset.rot) — base→센서 프레임 회전
+        offset_quat = torch.tensor(list(self.lidar.cfg.offset.rot), device=self.device)
+        self._R_offset = matrix_from_quat(offset_quat.unsqueeze(0)).squeeze(0)
+
+        self.h_obs = torch.zeros(self.num_envs, self.num_points, device=self.device)
+        self.valid_frac = torch.zeros(self.num_envs, self.num_points, device=self.device)
+        # 검증 스크립트(scripts/emcupy_check)가 valid_frac 등에 접근할 수 있게 노출
+        env.em_scan_term = self
+
+    def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs)
+        # teleport 후 옛 지형이 남으면 안 된다. 관측도 "아직 아무것도 못 봄"(=0)으로.
+        self.backend.clear([int(i) for i in env_ids])
+        self.h_obs[env_ids] = 0.0
+        self.valid_frac[env_ids] = 0.0
+
+    def __call__(
+        self,
+        env: ParkourManagerBasedRLEnv,
+        asset_cfg: SceneEntityCfg,
+        sensor_cfg: SceneEntityCfg,
+        **kwargs,
+    ) -> torch.Tensor:
+        # 센서 프레임(0.1s)과 같은 위상: 기존 depth/scandots 의 %5 게이트와 일치.
+        if env.common_step_counter % self.update_interval == 0:
+            self._update()
+        return self.h_obs
+
+    @torch.no_grad()
+    def _update(self):
+        lidar = self.lidar
+        # .data 접근이 센서 lazy 갱신을 트리거 — 직전 0.1s 프레임(2160 ray, yaw 1.1회전)
+        hits = lidar.data.ray_hits_w  # (N,R,3), miss=inf
+        origins = lidar._ray_starts_w  # (N,R,3) — 전 ray 공통 마운트 원점
+        dirs = lidar._ray_directions_w  # (N,R,3) 단위벡터
+
+        t_hit = (hits - origins).norm(dim=-1)
+        finite = torch.isfinite(t_hit)
+        t_hit = torch.where(finite, t_hit, torch.zeros_like(t_hit))
+
+        # self-hit 필터: 부풀린 캡슐(로봇 기하 테이블)에 대한 ray 경로 관통 판정.
+        # 로봇 collision mesh 가 캐스트 타깃이라 body 에 맞은 ray 는 t_hit 이 몸에서
+        # 끝나 있고, 그 경로는 캡슐을 관통하므로 여기서 걸린다.
+        from parkour_isaaclab.sensors import ray_capsule_penetrates
+
+        body_pos = self.asset.data.body_pos_w
+        body_quat = self.asset.data.body_quat_w
+        self_hit = torch.zeros_like(finite)
+        for ia, off_a, ib, off_b, radius in self._capsules:
+            pa = body_pos[:, ia]
+            pb = body_pos[:, ib]
+            if bool((off_a != 0).any()):
+                pa = pa + quat_apply(body_quat[:, ia], off_a.expand(self.num_envs, 3))
+            if bool((off_b != 0).any()):
+                pb = pb + quat_apply(body_quat[:, ib], off_b.expand(self.num_envs, 3))
+            self_hit |= ray_capsule_penetrates(origins, dirs, t_hit, pa, pb, radius)
+        valid = finite & ~self_hit
+
+        # L1 거리 노이즈 (스펙 ±2cm). 방향은 결정론이라 range 에만 건다.
+        if self.range_std > 0:
+            t_hit = (t_hit + torch.randn_like(t_hit) * self.range_std).clamp_min(0.0)
+        points_w = origins + dirs * t_hit.unsqueeze(-1)
+
+        # 센서 pose (GT) — 점군을 센서 프레임으로 되돌리는 데 쓴다. 실기에서 점군은
+        # 애초에 센서 프레임으로 들어오므로 이 변환에는 odometry 오차가 없다.
+        t_s = origins[:, 0, :]
+        R_base = matrix_from_quat(self.asset.data.root_quat_w)
+        R_s = torch.bmm(R_base, self._R_offset.expand(self.num_envs, 3, 3))
+        p_rel = points_w - t_s.unsqueeze(1)
+        points_sensor = torch.einsum("nij,nri->nrj", R_s, p_rel)  # R_sᵀ (p−t)
+
+        # odometry(6D pose) 백색잡음 — EM 이 아는 "odom frame 상의 pose" 에만 건다.
+        base_pos = self.asset.data.root_pos_w
+        if self.odom_pos_std > 0 or self.odom_rot_std_rad > 0:
+            d_pos = torch.randn(self.num_envs, 3, device=self.device) * self.odom_pos_std
+            d_rpy = torch.randn(self.num_envs, 3, device=self.device) * self.odom_rot_std_rad
+            # small-angle 회전: R_err ≈ I + [δθ]×
+            zeros = torch.zeros(self.num_envs, device=self.device)
+            skew = torch.stack(
+                [
+                    torch.stack([zeros, -d_rpy[:, 2], d_rpy[:, 1]], dim=-1),
+                    torch.stack([d_rpy[:, 2], zeros, -d_rpy[:, 0]], dim=-1),
+                    torch.stack([-d_rpy[:, 1], d_rpy[:, 0], zeros], dim=-1),
+                ],
+                dim=1,
+            )
+            R_err = torch.eye(3, device=self.device).expand(self.num_envs, 3, 3) + skew
+            R_s_n = torch.bmm(R_err, R_s)
+            t_s_n = t_s + d_pos
+            base_pos_n = base_pos + d_pos
+            R_base_n = torch.bmm(R_err, R_base)
+        else:
+            R_s_n, t_s_n, base_pos_n, R_base_n = R_s, t_s, base_pos, R_base
+
+        pts_list = [points_sensor[i][valid[i]] for i in range(self.num_envs)]
+        self.backend.update(pts_list, R_s_n, t_s_n, base_pos_n, R_base_n)
+
+        # scandot 위치(ray_alignment="yaw" 와 동일: yaw 만 따라 회전) 에서 샘플
+        _, _, yaw = euler_xyz_from_quat(self.asset.data.root_quat_w)
+        cy, sy = torch.cos(yaw), torch.sin(yaw)
+        ox, oy = self._scan_offsets_xy[:, 0], self._scan_offsets_xy[:, 1]
+        px = base_pos[:, 0:1] + cy[:, None] * ox[None, :] - sy[:, None] * oy[None, :]
+        py = base_pos[:, 1:2] + sy[:, None] * ox[None, :] + cy[:, None] * oy[None, :]
+        points_xy = torch.stack([px, py], dim=-1)
+        self.h_obs, self.valid_frac = self.backend.sample(points_xy, base_pos[:, 2])
+
 
 class image_features(ManagerTermBase):
     

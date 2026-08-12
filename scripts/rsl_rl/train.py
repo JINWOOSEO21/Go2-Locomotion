@@ -165,14 +165,16 @@ def main(env_cfg: ParkourManagerBasedRLEnv |ManagerBasedRLEnvCfg | DirectRLEnvCf
         env = multi_agent_to_single_agent(env)
     
     # save resume path before creating a new log_dir
-    if agent_cfg.resume or agent_cfg.algorithm.class_name == "DistillationWithExtractor":
+    # (EMDistillation 은 elevation-map student — teacher 출발점 규약을 그대로 따른다)
+    _distill_classes = ("DistillationWithExtractor", "EMDistillation")
+    if agent_cfg.resume or agent_cfg.algorithm.class_name in _distill_classes:
         load_run, load_checkpoint = agent_cfg.load_run, agent_cfg.load_checkpoint
         # distillation 의 출발점은 teacher 다. agent_cfg.load_run 은 play/evaluation 이
         # 집어올 student 를 가리키므로 그대로 쓰면 student 를 이어 학습하게 된다.
         # --resume 으로 student 학습을 이어가는 경우와 --load_run 을 손으로 준 경우는
         # 사용자의 지정이 이기게 둔다.
         if (
-            agent_cfg.algorithm.class_name == "DistillationWithExtractor"
+            agent_cfg.algorithm.class_name in _distill_classes
             and not agent_cfg.resume
             and args_cli.load_run is None
             and getattr(agent_cfg, "distill_load_run", None)
@@ -202,7 +204,7 @@ def main(env_cfg: ParkourManagerBasedRLEnv |ManagerBasedRLEnvCfg | DirectRLEnvCf
     # # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint
-    if agent_cfg.resume or agent_cfg.algorithm.class_name == "DistillationWithExtractor":
+    if agent_cfg.resume or agent_cfg.algorithm.class_name in _distill_classes:
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         # 학습 재개에서만 지형 커리큘럼까지 되살린다. 체크포인트에 terrain_levels 가

@@ -127,13 +127,17 @@ def main():
     print(ppo_runner)
     # obtain the trained policy for inference
 
-    estimator = ppo_runner.get_estimator_inference_policy(device=env.device) 
+    estimator = ppo_runner.get_estimator_inference_policy(device=env.device)
     if agent_cfg.algorithm.class_name == "DistillationWithExtractor":
         policy = ppo_runner.get_inference_depth_policy(device=env.unwrapped.device)
         depth_encoder = ppo_runner.get_depth_encoder_inference_policy(device=env.device)
 
+    elif agent_cfg.algorithm.class_name == "EMDistillation":
+        # elevation-map student: depth encoder 없음, depth_actor 만 (play.py 와 동일 규약)
+        policy = ppo_runner.get_inference_depth_policy(device=env.unwrapped.device)
     else:
         policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
+    is_em = agent_cfg.algorithm.class_name == "EMDistillation"
 
     dt = env.unwrapped.step_dt
     estimator_paras = agent_cfg.to_dict()["estimator"]
@@ -159,12 +163,20 @@ def main():
     for i in tqdm(range(1500)):
         start_time = time.time()
         # run everything in inference mode
-        if agent_cfg.algorithm.class_name != "DistillationWithExtractor":
+        if agent_cfg.algorithm.class_name not in ("DistillationWithExtractor", "EMDistillation"):
             with torch.inference_mode():
                 # agent stepping
                 # obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = estimator.inference(obs[:, :num_prop])
                 actions = policy(obs, hist_encoding = True)
             # env stepping
+        elif is_em:
+            # EM student: obs 의 scan 구간을 em_scan(10Hz 갱신)으로 교체해
+            # depth_actor 의 자체 scan_encoder 가 인코딩한다 (play.py 와 동일).
+            em_scan = extras["observations"]["em_scan"].to(env.device)
+            with torch.inference_mode():
+                obs_em = obs.clone()
+                obs_em[:, num_prop:num_prop + num_scan] = em_scan
+                actions = policy(obs_em, hist_encoding=True)
         else:
             depth_camera = extras["observations"]['depth_camera'].to(env.device)
             with torch.inference_mode():

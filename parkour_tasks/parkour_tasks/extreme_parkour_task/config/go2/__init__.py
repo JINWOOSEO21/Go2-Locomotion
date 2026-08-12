@@ -80,3 +80,36 @@ gym.register(
         "skrl_cfg_entry_point": f"{agents.__name__}:skrl_parkour_ppo_cfg.yaml",
     },
 )
+
+gym.register(
+    id="Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-v0",
+    entry_point="parkour_isaaclab.envs:ParkourManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.parkour_em_student_cfg:UnitreeGo2EMStudentParkourEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_em_student_ppo_cfg:UnitreeGo2ParkourEMStudentPPORunnerCfg",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_parkour_ppo_cfg.yaml",
+    },
+)
+
+gym.register(
+    id="Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Play-v0",
+    entry_point="parkour_isaaclab.envs:ParkourManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.parkour_em_student_cfg:UnitreeGo2EMStudentParkourEnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_em_student_ppo_cfg:UnitreeGo2ParkourEMStudentPPORunnerCfg",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_parkour_ppo_cfg.yaml",
+    },
+)
+
+gym.register(
+    id="Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Eval-v0",
+    entry_point="parkour_isaaclab.envs:ParkourManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.parkour_em_student_cfg:UnitreeGo2EMStudentParkourEnvCfg_EVAL",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_em_student_ppo_cfg:UnitreeGo2ParkourEMStudentPPORunnerCfg",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_parkour_ppo_cfg.yaml",
+    },
+)

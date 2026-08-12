@@ -17,10 +17,10 @@ from .actor_critic_with_encoder import ActorCriticRMA
 from rsl_rl.utils import store_code_state
 from rsl_rl.runners.on_policy_runner import OnPolicyRunner
 from .feature_extractors import DefaultEstimator
-from .ppo_with_extractor import PPOWithExtractor 
-from .distillation_with_extractor import DistillationWithExtractor 
-from copy import copy 
-import warnings 
+from .ppo_with_extractor import PPOWithExtractor
+from .distillation_with_extractor import DistillationWithExtractor, EMDistillation
+from copy import copy
+import warnings
 
 class OnPolicyRunnerWithExtractor(OnPolicyRunner):
     def __init__(self, env: VecEnv, train_cfg: dict, log_dir: str | None = None, device="cpu"):
@@ -36,7 +36,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
 
         if self.alg_cfg["class_name"] == "PPOWithExtractor":
             self.training_type = "rl"
-        elif self.alg_cfg["class_name"] == "DistillationWithExtractor":
+        elif self.alg_cfg["class_name"] in ("DistillationWithExtractor", "EMDistillation"):
             self.training_type = "distillation"
         else:
             raise ValueError(f"Training type not found for algorithm {self.alg_cfg['class_name']}.")
@@ -85,8 +85,23 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
 
         # initialize algorithm
 
-        self.learn = self.learn_rl if self.depth_encoder_cfg is None else self.learn_vision
-        if self.depth_encoder_cfg is not None:
+        self.em_cfg = train_cfg.get("em_distillation", None)
+        if self.em_cfg is not None:
+            # elevation-map student (계획서 §2.5): depth encoder 없이 depth_actor 만.
+            self.learn = self.learn_em
+            alg_class = eval(self.alg_cfg.pop("class_name"))
+            self.alg: EMDistillation = alg_class(
+                                                    policy=policy,
+                                                    estimator=estimator,
+                                                    estimator_paras=self.estimator_cfg,
+                                                    em_cfg=self.em_cfg,
+                                                    learning_rate=self.alg_cfg['learning_rate'],
+                                                    max_grad_norm=self.alg_cfg['max_grad_norm'],
+                                                    device=self.device,
+                                                    multi_gpu_cfg=self.multi_gpu_cfg,
+                                                    )
+        elif self.depth_encoder_cfg is not None:
+            self.learn = self.learn_vision
             alg_class = eval(self.alg_cfg.pop("class_name"))
             self.alg: DistillationWithExtractor = alg_class(
                                                     policy = policy, 
@@ -100,6 +115,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                                                     multi_gpu_cfg=self.multi_gpu_cfg
                                                     )
         else:
+            self.learn = self.learn_rl
             self.dagger_update_freq = self.alg_cfg.pop("dagger_update_freq")
             alg_class = eval(self.alg_cfg.pop("class_name"))
             self.alg: PPOWithExtractor = alg_class(
@@ -123,7 +139,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         else:
             self.obs_normalizer = torch.nn.Identity().to(self.device)  # no normalization
             self.privileged_obs_normalizer = torch.nn.Identity().to(self.device)  # no normalization
-        if self.depth_encoder_cfg is None:
+        if self.depth_encoder_cfg is None and self.em_cfg is None:
 
             self.alg.init_storage(
                 self.training_type,
@@ -426,6 +442,109 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         if self.log_dir is not None and not self.disable_logs:
             self.save(os.path.join(self.log_dir, f"model_{self.current_learning_iteration}.pt"))
 
+    def learn_em(self, num_learning_iterations, init_at_random_ep_len=False):
+        """elevation-map student DAgger (계획서 §2.5).
+
+        learn_vision 에서 depth encoder/GRU/BPTT 를 들어낸 것:
+        - student 입력 = obs 복제본의 scan 구간([num_prop:num_prop+num_scan])을
+          em_scan 관측(10Hz 갱신, 사이 step 은 최신 값 유지)으로 갈아끼운 것.
+        - teacher 는 원본 obs(GT scandots)로 행동을 내고, L2 imitation 만 학습한다.
+        - encoder 상태가 없으므로 워밍업/latent 캐시/detach 가 전부 불필요하다.
+        """
+        if not isinstance(self.alg, EMDistillation):
+            raise TypeError('A algorithm must be EMDistillation, not a ', self.alg)
+        if self.log_dir is not None and self.writer is None and not self.disable_logs:
+            self.logger_type = self.cfg.get("logger", "tensorboard")
+            self.logger_type = self.logger_type.lower()
+
+            if self.logger_type == "neptune":
+                from rsl_rl.utils.neptune_utils import NeptuneSummaryWriter
+
+                self.writer = NeptuneSummaryWriter(log_dir=self.log_dir, flush_secs=10, cfg=self.cfg)
+                self.writer.log_config(self.env.cfg, self.cfg, self.alg_cfg, self.policy_cfg)
+            elif self.logger_type == "wandb":
+                from rsl_rl.utils.wandb_utils import WandbSummaryWriter
+
+                self.writer = WandbSummaryWriter(log_dir=self.log_dir, flush_secs=10, cfg=self.cfg)
+                self.writer.log_config(self.env.cfg, self.cfg, self.alg_cfg, self.policy_cfg)
+            elif self.logger_type == "tensorboard":
+                from torch.utils.tensorboard import SummaryWriter
+
+                self.writer = SummaryWriter(log_dir=self.log_dir, flush_secs=10)
+            else:
+                raise ValueError("Logger type not found. Please choose 'neptune', 'wandb' or 'tensorboard'.")
+
+        obs, extras = self.env.get_observations()
+        em_scan = extras["observations"]["em_scan"].to(self.device)
+        obs = obs.to(self.device)
+
+        self.alg.depth_actor.train()
+
+        self.start_learning_iteration = copy(self.current_learning_iteration)
+
+        ep_infos = []
+        lenbuffer = deque(maxlen=100)
+        cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
+
+        if self.is_distributed:
+            print(f"Synchronizing parameters for rank {self.gpu_global_rank}...")
+            self.alg.broadcast_parameters()
+
+        num_prop, num_scan = self.alg.num_prop, self.alg.num_scan
+        start_iter = self.current_learning_iteration
+        tot_iter = self.current_learning_iteration + num_learning_iterations
+        for it in range(start_iter, tot_iter):
+            start = time.time()
+            actions_buffer = []
+            for _ in range(self.em_cfg['num_steps_per_env']):
+                obs_student = obs.clone()
+                obs_student[:, num_prop:num_prop + num_scan] = em_scan
+                with torch.no_grad():
+                    actions_teacher = self.alg.policy.act_inference(obs, hist_encoding=True, scandots_latent=None)
+                # scandots_latent=None → depth_actor 의 자체 scan_encoder(teacher init)
+                # 가 em_scan 구간을 인코딩한다. 여기가 유일한 학습 경로다.
+                actions_student = self.alg.depth_actor(obs_student, hist_encoding=True, scandots_latent=None)
+                actions_buffer.append(actions_teacher.detach() - actions_student)
+
+                obs, _, dones, infos = self.env.step(actions_student.detach().to(self.env.device))
+                obs, dones = (obs.to(self.device), dones.to(self.device))
+                em_scan = infos["observations"]["em_scan"].to(self.device)
+                obs = self.obs_normalizer(obs)
+                if self.log_dir is not None:
+                    if "episode" in infos:
+                        ep_infos.append(infos["episode"])
+                    elif "log" in infos:
+                        ep_infos.append(infos["log"])
+                    cur_episode_length += 1
+                    new_ids = (dones > 0).nonzero(as_tuple=False)
+                    lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
+                    cur_episode_length[new_ids] = 0
+
+            stop = time.time()
+            collection_time = stop - start
+            start = stop
+            actions_buffer = torch.cat(actions_buffer, dim=0)
+            loss_dict = self.alg.update_depth_actor(actions_buffer)
+
+            stop = time.time()
+            learn_time = stop - start
+
+            self.current_learning_iteration = it
+            if self.log_dir is not None and not self.disable_logs:
+                self.log_vision(locals())
+                if it % self.save_interval == 0:
+                    self.save(os.path.join(self.log_dir, f"model_{it}.pt"))
+            ep_infos.clear()
+            if it == start_iter and not self.disable_logs:
+                git_file_paths = store_code_state(self.log_dir, self.git_status_repos)
+                if self.logger_type in ["wandb", "neptune"] and git_file_paths:
+                    for path in git_file_paths:
+                        self.writer.save_file(path)
+
+        # Save the final model after training
+        if self.log_dir is not None and not self.disable_logs:
+            self.save(os.path.join(self.log_dir, f"model_{self.current_learning_iteration}.pt"))
+
     def log_vision(self, locs, width=80, pad=35):
         
         collection_size = self.num_steps_per_env * self.env.num_envs * self.gpu_world_size
@@ -524,8 +643,10 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         if self.empirical_normalization:
             saved_dict["obs_norm_state_dict"] = self.obs_normalizer.state_dict()
             saved_dict["privileged_obs_norm_state_dict"] = self.privileged_obs_normalizer.state_dict()
-        if self.depth_encoder_cfg is not None :
+        # depth student(encoder+actor) / EM student(actor 만) 공용 분기
+        if getattr(self.alg, "depth_encoder", None) is not None:
             saved_dict['depth_encoder_state_dict'] = self.alg.depth_encoder.state_dict()
+        if getattr(self.alg, "depth_actor", None) is not None:
             saved_dict['depth_actor_state_dict'] = self.alg.depth_actor.state_dict()
         # -- 지형 커리큘럼 단계. 모델 밖에 있는 유일한 학습 상태라 같이 저장한다.
         #    없으면 재개할 때 randint(0, max_init_terrain_level+1) 로 다시 뽑혀
@@ -567,7 +688,8 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                 self.privileged_obs_normalizer.load_state_dict(loaded_dict["privileged_obs_norm_state_dict"])
             else:
                 self.privileged_obs_normalizer.load_state_dict(loaded_dict["obs_norm_state_dict"])
-        if self.depth_encoder_cfg is not None:
+        # depth student(encoder+actor) / EM student(actor 만) 공용 분기
+        if getattr(self.alg, "depth_encoder", None) is not None:
             if 'depth_encoder_state_dict' not in loaded_dict:
                 warnings.warn("'depth_encoder_state_dict' key does not exist, not loading depth encoder...")
             else:
@@ -590,14 +712,16 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                         head.weight.device
                     )
                 self.alg.depth_encoder.load_state_dict(depth_encoder_sd)
+        if getattr(self.alg, "depth_actor", None) is not None:
             if 'depth_actor_state_dict' in loaded_dict:
                 print("Saved depth actor detected, loading...")
                 self.alg.depth_actor.load_state_dict(loaded_dict['depth_actor_state_dict'])
             else:
                 print("No saved depth actor, Copying actor critic actor to depth actor...")
+                # teacher 체크포인트에서 distillation 을 시작하는 경로다. EM student 는
+                # 여기서 scan_encoder 까지 teacher weight 로 초기화된다 (Q6).
                 self.alg.depth_actor.load_state_dict(self.alg.policy.actor.state_dict())
-                # teacher 체크포인트에서 distillation 을 시작하는 경로다. teacher 의
-                # 'iter' (예: 14999) 를 그대로 물려받으면 student 첫 저장이
+                # teacher 의 'iter' (예: 14999) 를 그대로 물려받으면 student 첫 저장이
                 # model_15000.pt 가 되어 버린다. student 학습은 0 부터 새로 센다.
                 # (ActorCriticRMA.load_state_dict 가 항상 True 를 돌려주는 탓에
                 #  아래 resumed_training 분기만으로는 이걸 막을 수 없다.)
