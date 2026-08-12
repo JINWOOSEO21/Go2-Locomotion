@@ -346,6 +346,15 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             print(f"Synchronizing parameters for rank {self.gpu_global_rank}...")
             self.alg.broadcast_parameters()
 
+        # -- 재개 워밍업. depth encoder 의 GRU hidden 은 프로세스가 뜰 때 0 이고
+        #    학습 중에는 episode 가 끝나도 리셋되지 않아 항상 데워진 상태다.
+        #    재개 직후에는 모든 env 가 hidden=0 + depth 렌더 첫 프레임이라
+        #    student 행동이 teacher 와 크게 어긋나고, 그 쓰레기 buffer 로 첫
+        #    update 까지 돌면 수렴해 있던 가중치가 망가져 loss 스파이크가
+        #    수백 iteration 꼬리를 남긴다. 학습 전에 rollout 만 돌려 데운다.
+        if self.current_learning_iteration > 0:
+            obs, additional_obs = self._warmup_vision(obs, additional_obs)
+
         start_iter = self.current_learning_iteration
         tot_iter = self.current_learning_iteration + num_learning_iterations
         num_pretrain_iter = 0
@@ -425,6 +434,32 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         # Save the final model after training
         if self.log_dir is not None and not self.disable_logs:
             self.save(os.path.join(self.log_dir, f"model_{self.current_learning_iteration}.pt"))
+
+    def _warmup_vision(self, obs, additional_obs):
+        """재개 직후 GRU hidden/depth 렌더를 데우는 학습 없는 rollout.
+
+        learn_vision 의 수집 루프와 같은 스케줄(공통 step 5개마다 latent 갱신)로
+        student 행동을 따라 env 만 전진시킨다. loss 수집도 optimizer 갱신도 없다.
+        길이는 rollout 2번 분량 — GRU 가 latent 를 갱신하는 건 5 step 에 한 번이라
+        rollout 1번(120 step)은 GRU 24 스텝밖에 안 되어 넉넉히 잡았다. 5 의
+        배수라서 본 루프 첫 step 이 counter%5==0 으로 latent 를 새로 계산하는
+        가정도 그대로 유지된다.
+        """
+        num_steps = 2 * self.depth_encoder_cfg['num_steps_per_env']
+        print(f"Resume detected, warming up depth encoder hidden states for {num_steps} steps...")
+        depth_latent = None
+        with torch.no_grad():
+            for _ in range(num_steps):
+                if self.env.unwrapped.common_step_counter % 5 == 0 or depth_latent is None:
+                    obs_prop_depth = obs[:, :self.depth_encoder_cfg['num_prop']].clone()
+                    obs_prop_depth[:, 6:8] = 0
+                    depth_latent = self.alg.depth_encoder(additional_obs["depth_camera"].clone(), obs_prop_depth)
+                actions_student = self.alg.depth_actor(obs, hist_encoding=True, scandots_latent=depth_latent)
+                obs, _, _, infos = self.env.step(actions_student.to(self.env.device))
+                obs = self.obs_normalizer(obs.to(self.device))
+                additional_obs['depth_camera'] = infos["observations"]['depth_camera'].to(self.device)
+        self.alg.depth_encoder.detach_hidden_states()
+        return obs, additional_obs
 
     def log_vision(self, locs, width=80, pad=35):
         
@@ -527,6 +562,14 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         if self.depth_encoder_cfg is not None :
             saved_dict['depth_encoder_state_dict'] = self.alg.depth_encoder.state_dict()
             saved_dict['depth_actor_state_dict'] = self.alg.depth_actor.state_dict()
+        # -- 보조 optimizer 들. alg.optimizer 만 저장하면 나머지 Adam 의 모멘트가
+        #    재개 때 0 으로 리셋된다. 특히 distillation 의 depth_actor_optimizer 는
+        #    lr 1e-3 짜리 fresh Adam 이 수렴해 있던 student 를 흔들어 재개 직후
+        #    depth_actor_loss 스파이크(+수백 iteration 재수렴 꼬리)를 만든다.
+        for name in ("estimator_optimizer", "hist_encoder_optimizer", "depth_actor_optimizer"):
+            optimizer = getattr(self.alg, name, None)
+            if optimizer is not None:
+                saved_dict[f"{name}_state_dict"] = optimizer.state_dict()
         # -- 지형 커리큘럼 단계. 모델 밖에 있는 유일한 학습 상태라 같이 저장한다.
         #    없으면 재개할 때 randint(0, max_init_terrain_level+1) 로 다시 뽑혀
         #    커리큘럼이 바닥부터 다시 올라간다 (student 기준 10단계 중 0~2 로 리셋).
@@ -610,6 +653,22 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             # -- RND optimizer if used
             if self.alg.rnd:
                 self.alg.rnd_optimizer.load_state_dict(loaded_dict["rnd_optimizer_state_dict"])
+            # -- 보조 optimizer 들 (save() 참고). 키가 없으면 이 기능 이전의
+            #    체크포인트다: fresh Adam 으로 시작하므로 재개 직후 loss 가
+            #    한동안 출렁일 수 있음을 알린다.
+            for name in ("estimator_optimizer", "hist_encoder_optimizer", "depth_actor_optimizer"):
+                optimizer = getattr(self.alg, name, None)
+                if optimizer is None:
+                    continue
+                key = f"{name}_state_dict"
+                if key in loaded_dict:
+                    optimizer.load_state_dict(loaded_dict[key])
+                    print(f"Restored {name} state.")
+                elif name == "depth_actor_optimizer" and "depth_actor_state_dict" in loaded_dict:
+                    warnings.warn(
+                        f"checkpoint has no '{key}' (saved before optimizer persistence);"
+                        " the depth actor optimizer starts fresh, expect a transient loss bump"
+                    )
         # -- load current learning iteration
         if resumed_training:
             self.current_learning_iteration = loaded_dict["iter"]
