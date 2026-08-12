@@ -72,7 +72,9 @@ class UnitreeGo2StudentParkourEnvCfg(ParkourManagerBasedRLEnvCfg):
         # 환경 수를 크게 늘릴 때 contact buffer overflow 경고가 뜨면 이 값을 다시 올릴 것.
         self.sim.physx.gpu_max_rigid_contact_count = 2**20
         # update sensor update periods
-        self.scene.depth_camera.update_period = self.sim.dt * self.decimation
+        # (EM student 파생 cfg 는 depth_camera 를 None 으로 떼어낸다)
+        if getattr(self.scene, "depth_camera", None) is not None:
+            self.scene.depth_camera.update_period = self.sim.dt * self.decimation
         self.scene.height_scanner.update_period = self.sim.dt * self.decimation
         self.scene.contact_forces.update_period = self.sim.dt * self.decimation
         self.scene.terrain.terrain_generator.curriculum = True

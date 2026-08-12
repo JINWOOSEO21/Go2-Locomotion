@@ -94,6 +94,46 @@ class StudentObservationsCfg:
 
 
 @configclass
+class EMStudentObservationsCfg:
+    """elevation-map student 관측: policy 는 teacher 와 동일 벡터(753), 별도 그룹
+    em_scan(132)이 depth_camera 그룹을 대체한다. runner(learn_em)가 obs 의
+    scan 구간을 em_scan 으로 갈아끼워 student 에 준다."""
+
+    @configclass
+    class PolicyCfg(ObsGroup):
+        extreme_parkour_observations = ObsTerm(
+            func=observations.ExtremeParkourObservations,
+            params={
+            "asset_cfg":SceneEntityCfg("robot"),
+            "sensor_cfg":SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "parkour_name":'base_parkour',
+            "history_length": 10,
+            },
+            clip= (-100,100)
+        )
+
+    @configclass
+    class EMScanPolicyCfg(ObsGroup):
+        em_scan = ObsTerm(
+            func=observations.elevation_map_scan,
+            params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "sensor_cfg": SceneEntityCfg("lidar"),
+            # 계획서 §2.4 확정값 + §5 잔여 가정 (노이즈는 EM 입력에만 걸린다)
+            "em_resolution": 0.1,
+            "em_map_length": 3.2,
+            "update_interval": 5,      # 센서 자연 프레임 0.1s = 10Hz (Q1)
+            "odom_pos_std": 0.01,      # odometry 백색잡음 σ_xyz [m] (Q4)
+            "odom_rot_std_deg": 0.5,   # odometry 백색잡음 σ_rpy [deg] (Q4)
+            "range_std": 0.02,         # L1 거리 노이즈 σ [m] (스펙 ±2cm)
+            },
+        )
+
+    policy: PolicyCfg = PolicyCfg()
+    em_scan: EMScanPolicyCfg = EMScanPolicyCfg()
+
+
+@configclass
 class StudentRewardsCfg:
     reward_collision = RewTerm(
         func=rewards.reward_collision, 

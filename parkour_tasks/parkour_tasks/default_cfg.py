@@ -10,8 +10,9 @@ from parkour_tasks.extreme_parkour_task.config.go2 import agents
 from isaaclab.sensors import RayCasterCameraCfg, TiledCameraCfg
 from isaaclab.sensors.ray_caster.patterns import PinholeCameraPatternCfg
 from isaaclab.envs import ViewerCfg
-import os, torch 
+import os, torch
 from parkour_isaaclab.actuators.parkour_actuator_cfg import ParkourDCMotorCfg
+from parkour_isaaclab.sensors import L1ScanRayCasterCfg
 
 def quat_from_euler_xyz_tuple(roll: torch.Tensor, pitch: torch.Tensor, yaw: torch.Tensor) -> tuple:
     cy = torch.cos(yaw * 0.5)
@@ -113,6 +114,36 @@ CAMERA_USD_CFG = AssetBaseCfg(
             rot=quat_from_euler_xyz_tuple(*tuple(torch.deg2rad(torch.tensor([180,90,-90]))))
     )
 )
+# EM student 씬의 L1 LiDAR (elevation_map_scan 관측이 elevation map 을 만든다).
+# lidar 브랜치의 검증된 설정을 그대로 가져왔다:
+# - 반구(수평 360° x 수직 90°) 패턴, 마운트는 완전 하향: 돔 축(+Z)을 아래로
+#   (X축 180° 회전). 실기 extrinsic 확정 시 이 rot 만 교체.
+# - 레이 방향은 unilidar_sdk 의 이중 모터 운동학(L1ScanRayCaster)으로 매 갱신 계산.
+# - 로봇 자신은 collisions 프리미티브로 캐스트 타깃에 포함한다 (self-occlusion).
+#   .*/visuals 는 Head_upper/lower 에 visual 메시가 없어(17 vs rigid body 19)
+#   추적 뷰의 1:1 대조에서 RuntimeError 가 난다.
+# - update_mesh_ids 는 켜지 않는다: range 만 쓰므로 불필요하고, 켜면 (N,B,1) 버퍼
+#   vs (N,B) 반환의 업스트림 shape 버그에 걸린다.
+GO2_LIDAR_CFG = L1ScanRayCasterCfg(
+    prim_path="{ENV_REGEX_NS}/Robot/base",
+    offset=L1ScanRayCasterCfg.OffsetCfg(
+        pos=(0.28, 0.0, 0.10),
+        rot=(0.0, 1.0, 0.0, 0.0),
+    ),
+    ray_alignment="base",
+    # 프레임당 유효 포인트 수 (기본 2,160 = 21,600 pts/s x 0.1 s).
+    rays_per_frame=2160,
+    mesh_prim_paths=[
+        "/World/ground",
+        L1ScanRayCasterCfg.RaycastTargetCfg(
+            prim_expr="{ENV_REGEX_NS}/Robot/.*/collisions",
+            track_mesh_transforms=True,
+        ),
+    ],
+    max_distance=10.0,
+    debug_vis=False,
+)
+
 # 녹화 전용 추격 카메라. env 마다 1대씩 생기고 로봇을 따라다닌다.
 # TiledCamera 는 모든 env 를 한 번의 렌더 패스로 처리하므로, env 별 카메라를
 # 따로 두는 것보다 싸다. data.output["rgb"] 가 (num_envs, H, W, 3) 로 나온다.

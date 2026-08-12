@@ -414,6 +414,12 @@ def main():
                             filename="policy.onnx"
                         )
 
+    elif agent_cfg.algorithm.class_name == "EMDistillation":
+        # elevation-map student: depth encoder 가 없고 depth_actor 만 있다.
+        # 배포용 export 는 EM 파이프라인(센서→em_cupy→샘플)이 정책 밖에 살아서
+        # 아직 정의되지 않았다 — 재생/평가만 지원한다.
+        policy = ppo_runner.get_inference_depth_policy(device=env.unwrapped.device)
+        print("[INFO] EMDistillation: JIT/ONNX export 는 지원하지 않는다 (EM 파이프라인이 정책 밖).")
     else:
         policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
         policy_nn = ppo_runner.alg.policy
@@ -423,7 +429,8 @@ def main():
             policy_nn, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
         )
 
-    is_distill = agent_cfg.algorithm.class_name == "DistillationWithExtractor"
+    is_em = agent_cfg.algorithm.class_name == "EMDistillation"
+    is_distill = agent_cfg.algorithm.class_name in ("DistillationWithExtractor", "EMDistillation")
     if args_cli.fixed_heading:
         if is_distill:
             print("[INFO] --fixed_heading: 관측의 oracle heading 대신 월드 +X 방향을 목표로 삼는다.")
@@ -433,6 +440,9 @@ def main():
     record_depth = bool(args_cli.with_depth and args_cli.multicam)
     if args_cli.with_depth and not args_cli.multicam:
         print("[WARN] --with_depth 는 --multicam 과 같이 써야 한다. 무시한다.")
+        record_depth = False
+    if record_depth and is_em:
+        print("[WARN] --with_depth: EM student 씬에는 depth camera 가 없다. 무시한다.")
         record_depth = False
     if record_depth:
         what = "정책 입력" if is_distill else "녹화 전용(정책 입력 아님)"
@@ -484,7 +494,7 @@ def main():
         while simulation_app.is_running():
             start_time = time.time()
             # run everything in inference mode
-            if agent_cfg.algorithm.class_name != "DistillationWithExtractor":
+            if not is_distill:
                 # teacher 는 depth 를 안 먹지만, --with_depth 면 녹화용 관측군이 붙어 있다.
                 if record_depth:
                     depth_camera = extras["observations"]["depth_camera"].to(env.device)
@@ -493,6 +503,18 @@ def main():
                     obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = estimator.inference(obs[:, :num_prop])
                     actions = policy(obs, hist_encoding = True)
                 # env stepping
+            elif is_em:
+                # EM student: obs 의 scan 구간만 em_scan(10Hz 갱신, 사이 step 은 최신값)
+                # 으로 갈아끼우고 depth_actor 의 자체 scan_encoder 가 인코딩한다.
+                em_scan = extras["observations"]["em_scan"].to(env.device)
+                with torch.inference_mode():
+                    if args_cli.fixed_heading:
+                        delta = wrap_to_pi(0.0 - robot.data.heading_w)
+                        obs[:, 6] = 1.5 * delta
+                        obs[:, 7] = 1.5 * delta
+                    obs_em = obs.clone()
+                    obs_em[:, num_prop:num_prop + num_scan] = em_scan
+                    actions = policy(obs_em, hist_encoding=True)
             else:
                 depth_camera = extras["observations"]['depth_camera'].to(env.device)
                 with torch.inference_mode():

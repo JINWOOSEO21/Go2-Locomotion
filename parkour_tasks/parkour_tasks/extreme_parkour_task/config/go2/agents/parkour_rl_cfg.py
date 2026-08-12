@@ -42,6 +42,16 @@ class ParkourRslRlDepthEncoderCfg(ParkourRslRlBaseCfg):
     num_steps_per_env: int = 24 * 5
 
 @configclass
+class ParkourRslRlEMDistillationCfg(ParkourRslRlBaseCfg):
+    """elevation-map student distillation 설정 (depth encoder 없음).
+
+    depth 파이프라인의 ParkourRslRlDepthEncoderCfg 자리를 대신한다 —
+    encoder 관련 필드는 없고, DAgger 수집 길이와 학습률만 남는다.
+    """
+    learning_rate: float = 1.e-3
+    num_steps_per_env: int = 24 * 5
+
+@configclass
 class ParkourRslRlEstimatorCfg(ParkourRslRlBaseCfg):
     class_name: str = "DefaultEstimator" 
     train_with_estimated_states: bool = True 
@@ -77,6 +87,9 @@ class ParkourRslRlOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
     policy: ParkourRslRlPpoActorCriticCfg = MISSING
     estimator: ParkourRslRlEstimatorCfg = MISSING
     depth_encoder: ParkourRslRlDepthEncoderCfg | None = None
+    em_distillation: ParkourRslRlEMDistillationCfg | None = None
+    """elevation-map student distillation. depth_encoder 와 상호 배타 —
+    이 값이 있으면 runner 가 learn_em(algorithm class EMDistillation)으로 돈다."""
     algorithm: ParkourRslRlPpoAlgorithmCfg | ParkourRslRlDistillationAlgorithmCfg = MISSING
 
     distill_load_run: str | None = None
