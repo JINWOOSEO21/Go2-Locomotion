@@ -1,7 +1,8 @@
 # Student v1.3 계획서: L1 LiDAR + elevation_mapping_cupy 기반 terrain latent
 
 작성일: 2026-08-12 (세션 v1.3). 대상 브랜치: master(`ad11a4f`) 기준 신규 작업.
-개정: v1.1 (2026-08-12) — 사용자 결정 Q1~Q8 반영. 확정 사항은 §5 참조.
+개정: v1.2 (2026-08-12) — Q2 재개정: **scandots 그리드 현행 유지(12×11, 0.15m)**,
+teacher 재학습 없음. Q5 지연 모델링 제외. 확정 사항은 §5 참조.
 
 ## 0. 목표
 
@@ -11,14 +12,14 @@
 L1 LiDAR (MultiMeshRayCaster, 11Hz yaw / 180Hz pitch, 21,600 pt/s)
    → self-hit 필터 (부풀린 로봇 캡슐, GT proprioception)
    → elevation_mapping_cupy (노이즈 부여된 GT odometry, per-env 인스턴스)
-   → scandots 그리드에서 높이 샘플
-   → teacher scan_encoder MLP (teacher weight로 init 후 전체 fine-tune)
+   → teacher scandots 그리드(12×11=132점, 0.15m, base 기준 +1.2/−0.45/±0.75m)에서 높이 샘플
+   → teacher scan_encoder MLP (132→128→64→32 Tanh, teacher weight로 init 후 전체 fine-tune)
    → 32차원 terrain latent → DAgger distillation (기존 action-imitation L2 유지)
 ```
 
-**scandots 그리드는 v1.3에서 변경된다 (Q2 결정)**: 기존 12×11(0.15m, +1.2/−0.45/±0.75)
-→ **17×16=272점 (0.1m, base 기준 +1.2/−0.4/±0.75)**. teacher의 GT scandots도 동일하게
-변경하므로 **teacher 재학습이 선행 조건**이다(§2.0, §3).
+scandots 그리드와 teacher는 **현행 그대로 유지**한다(Q2 최종 결정) — 기존 teacher
+ckpt(`model_16999.pt`)를 그대로 사용하며 재학습 없음. EM 내부 그리드 해상도(0.1m)는
+scandots 간격(0.15m)과 별개의 값이다(§2.4).
 
 정책은 50Hz로 동작하고, terrain latent는 센서 자연 프레임 주기(0.1s, 10Hz)마다 갱신되며
 그 사이 4 step은 최신 값을 재사용한다(Q1 결정).
@@ -27,15 +28,13 @@ L1 LiDAR (MultiMeshRayCaster, 11Hz yaw / 180Hz pitch, 21,600 pt/s)
 
 ## 1. 사전 확인 결과
 
-### 1.1 Teacher scandots / encoder (master 현행)
+### 1.1 Teacher scandots / encoder (master, 현행 유지)
 
-- 현행 그리드: `GridPatternCfg(resolution=0.15, size=[1.65, 1.5])` + offset x=+0.375
-  → 12×11=132점, base 기준 +1.20/−0.45/±0.75m (`parkour_teacher_cfg.py:17-27`).
-  **v1.3 변경**: `GridPatternCfg(resolution=0.1, size=[1.6, 1.5])` + offset x=+0.4
-  → x: −0.4…+1.2m 17점, y: ±0.75m 16점, **272점**.
-- flatten 순서: `ordering="xy"` → shape (n_y, n_x), index = `y_idx*n_x + x_idx`.
-  (`scripts/rsl_rl/multicam_recorder.py:82-110`의 `resolve_scandots_grid`는 cfg에서
-  자동 유도하므로 그리드 변경에 자동 적응.)
+- 그리드: `GridPatternCfg(resolution=0.15, size=[1.65, 1.5])` + offset x=+0.375
+  → x: base 기준 −0.45…+1.20m 12점, y: ±0.75m 11점, **12×11=132점**
+  (`parkour_teacher_cfg.py:17-27`). 변경 없음.
+- flatten 순서: `ordering="xy"` → shape (n_y=11, n_x=12), index = `y_idx*12 + x_idx`
+  (`scripts/rsl_rl/multicam_recorder.py:82-110`의 `resolve_scandots_grid` 참조).
 - 높이 식: `clip(pos_w_z − hit_z − 0.3, −1, 1)` (`observations.py:139-140`).
   **`data.pos_w`는 cfg offset(z=+20)을 포함하지 않음을 IsaacLab 소스에서 확인**
   (`ray_caster.py:155` — `self._offset`은 추적 prim 자체 오프셋, base면 identity; cfg offset은
@@ -43,20 +42,20 @@ L1 LiDAR (MultiMeshRayCaster, 11Hz yaw / 180Hz pitch, 21,600 pt/s)
 - ray_alignment="yaw": 그리드는 로봇 yaw만 따라 회전 (roll/pitch 무시).
 - 갱신: `common_step_counter % 5 == 0`(10Hz)에서만 재계산, 캐시 유지 (`observations.py:64-67`).
   노이즈 없음. → Q1 결정(10Hz)과 정확히 일치하는 주기.
-- encoder: `Linear(N_scan→128) ELU → Linear(128→64) ELU → Linear(64→32) Tanh`
-  (`actor_critic_with_encoder.py:55-70`). N_scan은 obs 구성에서 유도되므로 272로 자동 확장.
-- checkpoint 키: `model_state_dict["actor.scan_encoder.{0,2,4}.{weight,bias}"]`.
-  **기존 teacher ckpt(`model_16999.pt`)는 132입력이라 재사용 불가 → 재학습 필요.**
+- encoder: `Linear(132→128) ELU → Linear(128→64) ELU → Linear(64→32) Tanh`
+  (`actor_critic_with_encoder.py:55-70`).
+- checkpoint 키: `model_state_dict["actor.scan_encoder.{0,2,4}.{weight,bias}"]`
+  (teacher `model_16999.pt`에서 shape 확인 완료 — 그대로 사용).
 - **주입 지점**: `Actor.forward(obs, hist_encoding, scandots_latent=None)` — `None`이면
-  obs의 scan 슬라이스를 자체 scan_encoder에 통과 (`actor_critic_with_encoder.py:89-101`).
+  obs[53:185]를 자체 scan_encoder에 통과 (`actor_critic_with_encoder.py:89-101`).
   distillation 시 `depth_actor = deepcopy(teacher actor)` 로드
-  (`on_policy_runner_with_extractor.py:639-648`) → scan_encoder가 (신)teacher weight로
+  (`on_policy_runner_with_extractor.py:639-648`) → scan_encoder가 teacher weight로
   자동 초기화되고, 옵티마이저에 포함되어 전체 fine-tune됨(Q6 결정과 일치).
 
 ### 1.2 Student 현행 구조 (master)
 
 - obs `policy` 그룹 753 = prop 53 | scan 132 | priv_explicit 9 | priv_latent 29 | history 530.
-  **v1.3: scan 272로 → 총 893.** teacher/student 동일 벡터.
+  teacher/student 동일 벡터. 변경 없음.
 - depth encoder(ConvNet+GRU) forward는 `% 5 == 0`(10Hz)에서만, 사이 4 step은 같은 latent
   재사용 (`on_policy_runner_with_extractor.py:365-374`) — "최신 latent 재사용" 인프라 존재.
 - 손실: `(teacher_action.detach() − student_action).norm(p=2, dim=1).mean()` 단독,
@@ -101,6 +100,10 @@ L1 LiDAR (MultiMeshRayCaster, 11Hz yaw / 180Hz pitch, 21,600 pt/s)
   `[6]`(is_upper_bound) cupy 배열 직접 접근 + `torch.as_tensor` zero-copy가 유일한 실용 경로.
   `get_map_with_name_ref`는 GPU→CPU 복사라 학습 루프 사용 금지.
   임의 (x,y) 샘플 API 없음 — 자체 gather 구현(단순).
+- **미관측 셀의 원래 처리(Q3 배경)**: 셀은 is_valid 플래그를 가질 뿐이며, 라이브러리는
+  내보낼 때 invalid 셀을 NaN으로 표기하고 값 결정은 소비자에게 맡긴다. 구멍 메움용
+  inpainting 플러그인(cv2 기반)이 있으나 CPU 경유라 학습 루프에 부적합. → §2.1의
+  cascade 채움 규칙이 우리 쪽 대응.
 - 인덱싱: `row=(x−cx)/res + cell_n/2`, `col=(y−cy)/res + cell_n/2` (row↔x, col↔y).
 - 자체 self-filter 없음(실기 ANYmal도 외부 필터 노드 사용) — 우리 캡슐 필터가 표준 위치.
 - **단일 맵 설계 — 배치 미지원.** 커널 소스는 파라미터 동일 시 캐시 재사용되어 인스턴스
@@ -123,20 +126,6 @@ L1 LiDAR (MultiMeshRayCaster, 11Hz yaw / 180Hz pitch, 21,600 pt/s)
 
 ## 2. 설계
 
-### 2.0 Teacher 그리드 변경 및 재학습 (Q2 결정의 선행 조건)
-
-`parkour_teacher_cfg.py`의 height_scanner를
-`offset.pos=(0.4, 0, 20.0)`, `GridPatternCfg(resolution=0.1, size=[1.6, 1.5])`로 변경.
-→ scandots 132 → **272**, obs 753 → **893**, scan_encoder 첫 층 `Linear(272→128)`.
-
-**파급효과 (중요):**
-- 기존 teacher ckpt(`teacher_pretrained/model_16999.pt`, trained_v1.x)와 **비호환** →
-  **teacher를 처음부터 재학습해야 함** (기존 실측: 6144 env, 15k iter ≈ **73h**).
-- height_scanner ray 수 6144×272 = 1.67M (기존 811k의 ~2배) — warp 평면 raycast라
-  스텝 시간 영향은 제한적일 것으로 예상하나 재학습 시작 시 실측.
-- teacher 재학습은 그리드 변경 커밋 직후 시작해 student 파이프라인 구축(Phase 0~3)과
-  **병행**한다(§3).
-
 ### 2.1 파이프라인 (매 EM tick = 5 policy step = 0.1s, 10Hz)
 
 ```
@@ -148,19 +137,18 @@ L1 LiDAR (MultiMeshRayCaster, 11Hz yaw / 180Hz pitch, 21,600 pt/s)
    → t̃_s, R̃_s, base 포즈도 동일 잡음 계열로 t̃_b, R̃_b
 5. per-env: em.move_to(t̃_b, R̃_b); em.input_pointcloud(p_s, R̃_s, t̃_s.copy(), 0, 0)
    (주기적으로 update_variance/update_time)
-6. 272점 샘플: scandot 위치 = base_xy + yaw회전(그리드 오프셋) [ray_alignment="yaw" 동일]
+6. 132점 샘플: scandot 위치 = base_xy + yaw회전(그리드 오프셋) [ray_alignment="yaw" 동일]
    h_abs = bilinear(elevation) + center[2]
-   invalid 셀 채움(Q3): is_valid → h, 아니면 is_upper_bound → upper_bound, 아니면 0
+   invalid 셀 채움(Q3 cascade): is_valid → h, 아니면 is_upper_bound → upper_bound, 아니면 0
    h_obs = clip(base_z − h_abs − 0.3, −1, 1)  ← teacher 식과 동일
-7. student obs 캐시 갱신: scan 슬라이스 [53:325]를 h_obs로 (다음 tick까지 유지)
+7. student obs 캐시 갱신: scan 슬라이스 [53:185]를 h_obs로 (다음 tick까지 유지)
 [매 policy step, 50Hz]
 8. student action = depth_actor(obs_em, hist_encoding=True, scandots_latent=None)
-   → 자체 scan_encoder(=신 teacher init, 전체 fine-tune)가 latent 계산
+   → 자체 scan_encoder(=teacher init, 전체 fine-tune)가 latent 계산
    teacher action = policy.act_inference(원본 obs, GT scandots) → L2 imitation
 ```
 
-지연 모델링(Q5): **1차 학습은 지연 0** (tick 종료 즉시 h_obs 사용). 실기에서는 EM 계산
-시간만큼 맵이 과거가 되므로, sim2real 단계에서 k-step 지연 옵션(플래그)만 마련해 둔다.
+지연 모델링(Q5): **하지 않음.** tick 종료 즉시 h_obs 사용.
 
 ### 2.2 L1 센서 이식
 
@@ -187,7 +175,9 @@ lidar 브랜치의 `GO2_SELF_FILTER_CAPSULES` + `ray_capsule_penetrates`를 그�
 
 ```python
 Parameter (확정값):
-  resolution=0.1, map_length=3.2          # scandot 최원점 √(1.2²+0.75²)=1.415m + 여유; cell_n=34
+  resolution=0.1, map_length=3.2          # EM 내부 그리드. scandot 최원점 √(1.2²+0.75²)=1.415m
+                                          # + 여유; cell_n=34. scandots 간격 0.15m보다 조밀해
+                                          # bilinear 샘플에 충분.
   sensor_noise_factor=0.05, mahalanobis_thresh=2.0
   min_valid_distance=0.10                 # 캡슐 필터 t0=0.12보다 작게
   max_height_range=1.0, ramped_* 기본값   # Q8: ceiling 필터 적용(ramp/stair라 무해)
@@ -205,7 +195,7 @@ Parameter (확정값):
 
 ### 2.5 관측/학습 통합
 
-- runner에서 obs 복제 후 scan 슬라이스 [53:325]만 EM 샘플로 교체해 student에 공급.
+- runner에서 obs 복제 후 scan 슬라이스 [53:185]만 EM 샘플로 교체해 student에 공급.
   teacher는 원본 obs(GT scandots) 사용 — 현행 구조와 동일한 이원화.
 - `learn_vision` 기반의 단순화된 학습 루프 `learn_em`:
   - depth encoder/GRU/BPTT/hidden 워밍업 제거 (resume 스파이크 이슈 소멸).
@@ -227,43 +217,39 @@ Q1 결정: **10Hz(5 step) 고정, 센서 자연 프레임(0.1s=1.1회전) 그대
 
 | Phase | 내용 | 검증 게이트 |
 |---|---|---|
-| G | **그리드 변경**: teacher/student cfg 0.1m·+1.2/−0.4/±0.75(17×16=272), obs 893 파생 확인 | headless cfg 검증(관례대로 SimulationApp 선행), scandots viz로 그리드 확인 |
-| T | **teacher 재학습 시작** (6144 env, 15k iter ≈ 73h) — 이후 Phase와 **병행** | 기존 teacher와 동급 보상/성공률 |
 | 0 | em_cupy 단독 구동: sys.path, allocator 교체, 기존 pytest 통과, 우리 Parameter로 smoke | 합성 점군에서 기대 높이 재현 |
 | 1 | L1 센서 이식(§2.2) + viz/test 재실행 | `test_l1_pattern` 통과, viz 확인 |
-| 2 | 단일 env 통합: 필터→변환→odometry 노이즈→EM→272점 샘플. play.py에 GT vs EM 동시 시각화 | §5 게이트: 유효 셀 RMSE < 0.05m, invalid 비율 < 20% (보행 1s 후) |
+| 2 | 단일 env 통합: 필터→변환→odometry 노이즈→EM→132점 샘플. play.py에 GT vs EM 동시 시각화 | §5 게이트: 유효 셀 RMSE < 0.05m, invalid 비율 < 20% (보행 1s 후) — 학습 전 파이프라인 sanity check일 뿐, 학습/모델에는 불개입(§5-Q7) |
 | 3 | 192 env 확장(stock 루프) + 벤치마크(시간·VRAM) | tick당 EM 총 시간 실측 → 3′ 진행 판단 |
 | 3′ | (조건부) batched 커널 포트 | Phase 2와 출력 일치(회귀) |
-| 4 | 학습 통합: runner/cfg/task 등록, 신 teacher ckpt로 짧은 학습(수백 iter) | distillation loss 하강, play 정성 평가 |
+| 4 | 학습 통합: runner/cfg/task 등록, 기존 teacher ckpt(`model_16999.pt`)로 짧은 학습(수백 iter) | distillation loss 하강, play 정성 평가 |
 | 5 | 본학습 5k iter | 기존 depth student 대비 성공률 |
 
-Phase 4는 T(teacher 재학습) 완료에 종속. G~3′은 T와 병행 가능하나 **GPU가 1장이므로
-실제로는 T가 GPU를 점유하는 73h 동안 Phase 0~2(소규모 env, 짧은 실행)만 틈틈이 진행**하고
-Phase 3 벤치마크는 T 종료 후 수행하는 일정이 현실적.
+각 Phase 종료 시 커밋. 검증은 headless 원칙(env cfg 검증은 `env_isaaclab python` +
+`SimulationApp(headless)` 선행, print는 파일로) 준수.
 
 ## 4. 리스크
 
-1. **teacher 재학습 비용** (Q2 결정의 직접 비용): 73h + 검증. 그리드 변경으로 성능이
-   기존과 달라질 수 있음(0.1m 조밀 그리드는 정보가 늘어 같거나 나을 것으로 기대).
-2. **인스턴스 루프 성능**: 192 env 직렬 → tick당 수십~수백 ms 가능성. Phase 3에서 조기
-   판정, 3′로 해소. 최악 시 num_envs 축소 병행.
-3. **VRAM**: §7 분석 참조. 순효과는 중립~개선 예상이나 실측 필요.
-4. **미관측 셀**: 채움 규칙(§5-Q3)이 학습 품질 좌우. Phase 2에서 invalid 비율 곡선 확인.
-5. **teacher와의 분포 차이**: EM은 지연·부분 관측이라 초기 loss가 depth student보다
+1. **인스턴스 루프 성능** (최대 리스크): 192 env 직렬 → tick당 수십~수백 ms 가능성.
+   Phase 3에서 조기 판정, 3′로 해소. 최악 시 num_envs 축소 병행.
+2. **VRAM**: §7 분석 참조. 순효과는 중립~개선 예상이나 실측 필요.
+3. **미관측 셀**: 채움 규칙(Q3 cascade)이 학습 품질 좌우. Phase 2에서 invalid 비율
+   곡선 확인.
+4. **teacher와의 분포 차이**: EM은 지연·부분 관측이라 초기 loss가 depth student보다
    높을 수 있음(정상).
-6. em_cupy 수정(traversability 우회 등)은 vendored 패치로 격리.
+5. em_cupy 수정(traversability 우회 등)은 vendored 패치로 격리.
 
 ## 5. 결정 사항 (사용자 확정) 및 잔여 가정
 
 | # | 결정 |
 |---|---|
 | Q1 | 센서 자연 프레임 0.1s(10Hz, 1.1회전)만 사용 |
-| Q2 | resolution 0.1m, 범위 +1.2/−0.4/±0.75m — **teacher scandots도 동일 변경(17×16=272), teacher 재학습** |
-| Q3 | invalid 셀 채움: valid→h, 아니면 upper_bound, 아니면 0 (cascade; visibility cleanup 활성으로 지원) |
-| Q4 | **odometry(6D pose) 노이즈 추가** — EM 입력 pose에만, policy obs는 GT 유지 |
-| Q5 | EM 지연 모델링: 1차 학습은 0, k-step 지연 플래그만 마련 |
+| Q2 | **scandots 그리드 현행 유지: 12×11=132점, 0.15m, +1.2/−0.45/±0.75m — teacher 변경·재학습 없음.** EM 내부 해상도는 별개로 0.1m |
+| Q3 | invalid 셀 채움 cascade: valid→h, 아니면 upper_bound, 아니면 0 (visibility cleanup 활성으로 지원) |
+| Q4 | odometry(6D pose) 노이즈 추가 — EM 입력 pose에만, policy obs는 GT 유지 |
+| Q5 | EM 지연 모델링 안 함 |
 | Q6 | teacher init 후 scan_encoder 포함 전체 fine-tune (현행 방식) |
-| Q7 | Phase 2 게이트: 유효 셀 RMSE < 0.05m, invalid 비율 < 20% (보행 1s 후 정상상태) |
+| Q7 | RMSE/invalid 지표는 **학습·모델 설계에 불개입** — Phase 2에서 학습 착수 전 매핑 파이프라인의 정확성을 판정하는 sanity check 게이트(미달 시 버그 수정·EM 파라미터 조정의 트리거)로만 사용. 최종 성능 평가는 기존대로 성공률 |
 | Q8 | ceiling 필터(max_height_range/ramped) 기본값으로 적용 — ramp/stair 지형이라 무해 |
 
 잔여 가정 (기본값으로 진행, 조정 가능):
@@ -271,13 +257,13 @@ Phase 3 벤치마크는 T 종료 후 수행하는 일정이 현실적.
   (드리프트형 누적 오차 모델은 후속 단계 옵션.)
 - lidar range 노이즈: **σ=0.02m 적용** (L1 스펙 ±2cm; lidar 브랜치와 동일 값). 끌 수 있게
   플래그화.
-- Q7 수치(RMSE 0.05m / invalid 20%)는 제안 기본값 — Phase 2 실측 후 함께 재조정.
+- Q7 게이트 수치(RMSE 0.05m / invalid 20%)는 제안 기본값 — Phase 2 실측 후 재조정 가능.
 
 ## 6. 이번에 만들지 않는 것 (혼동 방지)
 
 - `SimLegOdometry`/KF odometry — 노이즈 부여 GT 사용 (lidar 브랜치와의 차이점 1)
 - 자체 KF elevation map(`LidarElevationMap`) — em_cupy로 대체 (차이점 2)
-- `ExpandedScanEncoder`(396입력) — teacher 원형 272입력 MLP 사용 (차이점 3)
+- `ExpandedScanEncoder`(396입력) — teacher 원형 132입력 MLP 사용 (차이점 3)
 - depth camera 파이프라인 수정 — 기존 task 유지, 신규 task로 병행
 
 ## 7. VRAM 분석 (RTX 3060 12GB, 현 student 192 env = 11.1GB)
@@ -291,12 +277,10 @@ Phase 3 벤치마크는 T 종료 후 수행하는 일정이 현실적.
 - L1 raycaster 2160 ray/env × 192 = 415k ray (카메라의 1/3)
 - cupy CUDA 컨텍스트 + 커널 캐시: ~0.3–0.5GB (프로세스당 1회)
 - EM 인스턴스: 27그리드 × 34² × 4B ≈ 0.13MB × 192 ≈ **25MB** (무시 가능)
-- scandots 272점(132→272): student 192 env에서는 무시 가능, teacher 6144 env에서
-  +860k ray (teacher는 9.6GB였으므로 여유)
 
 순효과: **중립~개선 예상** (BPTT 그래프 제거분이 cupy 컨텍스트 추가분보다 클 가능성).
 Phase 3에서 실측하고, 부족 시 대응 순서:
 1. `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (단편화 완화)
-2. cupy를 별도 풀 대신 소형 고정 풀로 제한 (맵 총량이 25MB라 풀 상한 낮게 설정 가능)
+2. cupy를 소형 고정 풀로 제한 (맵 총량 25MB라 풀 상한 낮게 설정 가능)
 3. student num_envs 192→128 (학습 시간 ~1.5배)
 4. batched 포트(3′) 시 인스턴스별 scratch 그리드 통합으로 추가 절감
