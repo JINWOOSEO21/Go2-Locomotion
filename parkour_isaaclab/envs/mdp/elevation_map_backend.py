@@ -94,7 +94,10 @@ def sample_scan_heights(
     Returns:
         h_obs: (N, P) — clip(base_z − h_abs − height_offset, ±clip_range).
                invalid 셀 cascade: valid → h, 아니면 upper_bound, 아니면 0.
-        valid_frac: (N, P) — 셀 4이웃의 유효 가중치 합 (진단용, 0이면 채움값 사용).
+        valid_frac: (N, P) — 직접 관측(valid) 4이웃 가중치 합 (진단용).
+        ub_frac: (N, P) — upper_bound 4이웃 가중치 합. 둘 다 0 인 점만
+               '완전 미지'(fallback 0 사용)다 — 예: 정지 상태에서 몸 아래처럼
+               관측도 상공 통과 ray 도 없는 셀.
     """
     n, p = points_xy.shape[0], points_xy.shape[1]
     # 커널 규약: i = floor((x−c)/res + 0.5·cell_n), 셀 i 의 중심은 연속좌표 i+0.5.
@@ -142,7 +145,7 @@ def sample_scan_heights(
     h_obs = torch.clip(base_z[:, None] - h_abs - height_offset, -clip_range, clip_range)
     # 관측도 상한도 없는 셀: teacher 식 기준 0 (= base 기준 평지 가정)
     h_obs = torch.where((sum_valid > eps) | (sum_ub > eps), h_obs, torch.zeros_like(h_obs))
-    return h_obs, sum_valid
+    return h_obs, sum_valid, sum_ub
 
 
 class ElevationMapBackend:

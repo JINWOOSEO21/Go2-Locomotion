@@ -25,8 +25,10 @@ class UnitreeGo2ParkourEMStudentPPORunnerCfg(UnitreeGo2ParkourStudentPPORunnerCf
     )
     load_run = "student_em_pretrained"
     run_subdir = "student_em_pretrained"
-    # distillation 출발점(teacher)은 depth student 와 동일 규약을 상속:
-    # distill_load_run="teacher_pretrained", distill_load_checkpoint="model_14999.pt"
+    # distillation 출발점(teacher). depth student cfg 는 model_14999.pt 를 가리키지만
+    # 현재 teacher_pretrained/ 에는 resume 재학습 산출물인 model_16999.pt 만 있다
+    # — 존재하는 파일로 못박는다.
+    distill_load_checkpoint = "model_16999.pt"
 
     algorithm = ParkourRslRlDistillationAlgorithmCfg(
         class_name="EMDistillation",

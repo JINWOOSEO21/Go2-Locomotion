@@ -196,6 +196,7 @@ class elevation_map_scan(ManagerTermBase):
 
         self.h_obs = torch.zeros(self.num_envs, self.num_points, device=self.device)
         self.valid_frac = torch.zeros(self.num_envs, self.num_points, device=self.device)
+        self.ub_frac = torch.zeros(self.num_envs, self.num_points, device=self.device)
         # 검증 스크립트(scripts/emcupy_check)가 valid_frac 등에 접근할 수 있게 노출
         env.em_scan_term = self
 
@@ -206,13 +207,22 @@ class elevation_map_scan(ManagerTermBase):
         self.backend.clear([int(i) for i in env_ids])
         self.h_obs[env_ids] = 0.0
         self.valid_frac[env_ids] = 0.0
+        self.ub_frac[env_ids] = 0.0
 
     def __call__(
         self,
         env: ParkourManagerBasedRLEnv,
         asset_cfg: SceneEntityCfg,
         sensor_cfg: SceneEntityCfg,
-        **kwargs,
+        # 아래 파라미터들은 __init__ 에서 cfg.params 로 소비된다. ObservationManager 의
+        # 시그니처 검사를 통과하기 위해 여기 명시한다 (**kwargs 는 'kwargs' 라는
+        # 필수 파라미터로 오해석된다).
+        em_resolution: float = 0.1,
+        em_map_length: float = 3.2,
+        update_interval: int = 5,
+        odom_pos_std: float = 0.01,
+        odom_rot_std_deg: float = 0.5,
+        range_std: float = 0.02,
     ) -> torch.Tensor:
         # 센서 프레임(0.1s)과 같은 위상: 기존 depth/scandots 의 %5 게이트와 일치.
         if env.common_step_counter % self.update_interval == 0:
@@ -295,7 +305,7 @@ class elevation_map_scan(ManagerTermBase):
         px = base_pos[:, 0:1] + cy[:, None] * ox[None, :] - sy[:, None] * oy[None, :]
         py = base_pos[:, 1:2] + sy[:, None] * ox[None, :] + cy[:, None] * oy[None, :]
         points_xy = torch.stack([px, py], dim=-1)
-        self.h_obs, self.valid_frac = self.backend.sample(points_xy, base_pos[:, 2])
+        self.h_obs, self.valid_frac, self.ub_frac = self.backend.sample(points_xy, base_pos[:, 2])
 
 
 class image_features(ManagerTermBase):

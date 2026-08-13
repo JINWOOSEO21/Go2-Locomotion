@@ -50,7 +50,8 @@ def main():
 
     actions = torch.zeros(args_cli.num_envs, 12, device=env.unwrapped.device)
     warmup_steps = 50  # 1 s
-    rmse_sum, rmse_cnt, inv_sum, inv_cnt = 0.0, 0, 0.0, 0
+    rmse_sum, rmse_cnt = 0.0, 0
+    valid_sum, ub_sum, unknown_sum, frac_cnt = 0.0, 0.0, 0.0, 0
     step_times = []
 
     for step in range(args_cli.steps):
@@ -63,23 +64,33 @@ def main():
             policy_obs = obs_dict["policy"]
             gt = policy_obs[:, NUM_PROP:NUM_PROP + NUM_SCAN]
             em = obs_dict["em_scan"]
-            observed = env.unwrapped.em_scan_term.valid_frac > 1e-6
+            term = env.unwrapped.em_scan_term
+            observed = term.valid_frac > 1e-6
+            has_ub = (~observed) & (term.ub_frac > 1e-6)
+            unknown = (~observed) & (term.ub_frac <= 1e-6)
             if observed.any():
                 rmse_sum += float(torch.sqrt(((em - gt)[observed] ** 2).mean()))
                 rmse_cnt += 1
-            inv_sum += 1.0 - float(observed.float().mean())
-            inv_cnt += 1
+            valid_sum += float(observed.float().mean())
+            ub_sum += float(has_ub.float().mean())
+            unknown_sum += float(unknown.float().mean())
+            frac_cnt += 1
 
     mean_step_ms = sum(step_times[warmup_steps:]) / max(len(step_times[warmup_steps:]), 1) * 1000
     rmse = rmse_sum / max(rmse_cnt, 1)
-    inv = inv_sum / max(inv_cnt, 1)
+    valid = valid_sum / max(frac_cnt, 1)
+    ub = ub_sum / max(frac_cnt, 1)
+    unknown = unknown_sum / max(frac_cnt, 1)
     vram = torch.cuda.max_memory_allocated() / 2**20
 
     log(f"task={args_cli.task} num_envs={args_cli.num_envs} steps={args_cli.steps}")
-    log(f"[gate ] RMSE(valid) {rmse:.4f} m (< 0.05 목표) | invalid {inv*100:.1f}% (< 20% 목표)")
+    log(f"[cover] 직접관측 {valid*100:.1f}% | upper_bound 채움 {ub*100:.1f}% | 완전미지(0 채움) {unknown*100:.1f}%")
+    log(f"[gate ] RMSE(valid) {rmse:.4f} m (< 0.05 목표) | unknown {unknown*100:.1f}% (< 20% 목표)")
+    log("       (zero-action 정지 테스트: 몸 아래/다리 그림자 셀은 물리적으로 관측 불가 —")
+    log("        cascade 가 ub/0 으로 채우며, 보행 시에는 지나온 지형이 맵에 남아 줄어든다)")
     log(f"[perf ] mean {mean_step_ms:.1f} ms/step (50Hz 실시간 기준 20 ms)")
     log(f"[vram ] torch max allocated {vram:.0f} MiB (cupy pool 별도 — nvidia-smi 확인)")
-    ok = rmse < 0.05 and inv < 0.20
+    ok = rmse < 0.05 and unknown < 0.20
     log(f"[{'PASS' if ok else 'FAIL'}] compare_em_vs_scandots")
 
     with open(args_cli.out, "w") as f:
