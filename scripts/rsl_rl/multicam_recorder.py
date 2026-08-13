@@ -20,7 +20,7 @@ import torch
 
 import imageio.v2 as imageio
 
-from scripts.rsl_rl.video_overlay import depth_to_panel, scandots_to_panel
+from scripts.rsl_rl.video_overlay import depth_to_panel, label_panel, scandots_to_panel
 
 
 def pad_to_even(img: np.ndarray) -> np.ndarray:
@@ -162,10 +162,12 @@ class PerEnvVideoRecorder:
         Args:
             depth: (num_envs, ...) 모양의 depth 텐서/배열. 주면 각 프레임 오른쪽에
                 depth 패널을 붙인다 (play.py --with_depth). None 이면 안 붙인다.
-            scandots: (num_envs, num_scan) 모양의 height scan. 주면 그 오른쪽에
-                탑뷰 격자 패널을 붙인다 (play.py --with_scandots).
+            scandots: (num_envs, num_scan) 모양의 height scan — 주면 그 오른쪽에
+                탑뷰 격자 패널을 붙인다 (play.py --with_scandots). 여러 개를 나란히
+                비교하려면 [(라벨, 배열), ...] 리스트로 준다 (EM student 의
+                GT | Measured). 라벨은 패널 왼쪽 상단에 그려진다.
 
-        둘 다 주면 RGB | depth | scandots 순으로 가로로 붙는다.
+        둘 다 주면 RGB | depth | scandots... 순으로 가로로 붙는다.
         """
         rgb = self.camera.data.output["rgb"]
         if rgb is None:
@@ -185,14 +187,17 @@ class PerEnvVideoRecorder:
             if depth is not None:
                 panels.append(depth_to_panel(depth[i], frame.shape[0]))
             if scandots is not None:
-                panels.append(
-                    scandots_to_panel(
-                        scandots[i],
+                entries = scandots if isinstance(scandots, list) else [(None, scandots)]
+                for panel_label, arr in entries:
+                    panel = scandots_to_panel(
+                        arr[i],
                         frame.shape[0],
                         self.scandots_grid,
                         robot_cell=self.scandots_robot_cell,
                     )
-                )
+                    if panel_label:
+                        label_panel(panel, panel_label)
+                    panels.append(panel)
             w.append_data(pad_to_even(np.hstack(panels) if len(panels) > 1 else frame))
         self.written += 1
         return True

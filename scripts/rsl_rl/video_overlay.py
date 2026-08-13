@@ -106,3 +106,16 @@ def scandots_to_panel(
         cv2.line(panel, (cx, cy), tip, (255, 255, 255), 1, lineType=cv2.LINE_AA)
 
     return panel
+
+
+def label_panel(panel: np.ndarray, text: str) -> np.ndarray:
+    """패널 왼쪽 상단에 라벨을 그린다.
+
+    GT/Measured 처럼 나란히 붙는 패널을 구분하는 용도 (play.py --with_scandots,
+    EM student). 검은 테두리 + 흰 글씨라 TURBO 어느 색 위에서도 읽힌다.
+    """
+    scale = max(0.4, panel.shape[0] / 540 * 0.6)
+    org = (6, int(round(24 * scale / 0.6)))
+    cv2.putText(panel, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 3, cv2.LINE_AA)
+    cv2.putText(panel, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), 1, cv2.LINE_AA)
+    return panel
