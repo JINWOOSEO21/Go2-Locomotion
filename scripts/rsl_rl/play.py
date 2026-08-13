@@ -555,11 +555,15 @@ def main():
                     actions = policy(obs, hist_encoding=True, scandots_latent=depth_latent)
             # env.step 이 obs 를 갈아끼우므로, 방금 정책에 넣은 scan 구간을 먼저 떠 둔다.
             # depth 쪽과 마찬가지로 "이 프레임의 행동을 만든 입력"을 그려야 한다.
-            # EM student 는 정책 입력이 obs 가 아니라 obs_em(scan 구간이 elevation map
-            # 샘플로 교체된 것)이므로 그쪽을 그린다 — 이게 "오른쪽 elevation map 패널"이다.
+            # EM student 는 GT(obs 의 teacher scandots)와 Measured(obs_em 의
+            # elevation map 샘플 = 실제 정책 입력)를 나란히 붙여 비교한다.
             if record_scandots:
-                scan_src = obs_em if is_em else obs
-                scandots_np = scan_src[:, num_prop:num_prop + num_scan].detach().cpu().numpy()
+                gt_np = obs[:, num_prop:num_prop + num_scan].detach().cpu().numpy()
+                if is_em:
+                    em_np = obs_em[:, num_prop:num_prop + num_scan].detach().cpu().numpy()
+                    scandots_np = [("GT", gt_np), ("Measured", em_np)]
+                else:
+                    scandots_np = gt_np
             else:
                 scandots_np = None
             # 스텝 중에 렌더가 일어나므로 그 전에 카메라를 현재 로봇 위치로 옮겨둔다.
