@@ -122,6 +122,7 @@ class EMStudentObservationsCfg:
             # 계획서 §2.4 확정값 + §5 잔여 가정 (노이즈는 EM 입력에만 걸린다)
             "em_resolution": 0.1,
             "em_map_length": 3.2,
+            "em_backend": "batched",   # "loop" = em_cupy 인스턴스 직렬(회귀 비교용)
             "update_interval": 5,      # 센서 자연 프레임 0.1s = 10Hz (Q1)
             "odom_pos_std": 0.01,      # odometry 백색잡음 σ_xyz [m] (Q4)
             "odom_rot_std_deg": 0.5,   # odometry 백색잡음 σ_rpy [deg] (Q4)
