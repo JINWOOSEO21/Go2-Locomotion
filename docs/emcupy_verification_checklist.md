@@ -1,5 +1,12 @@
 # EM student (v1.3) 검증 체크리스트 — VRAM 확보 후 순서대로
 
+> **2026-08-13 실행 결과**: 0~5단계 전부 통과. Phase 3′(batched 커널 포트)까지
+> 완료되어 EM tick 250.8ms → 8.6ms(192 env), sim 포함 95.1 → 49.0 ms/step.
+> 회귀 검증은 `scripts/emcupy_check/regression_batched.py` (em_cupy 의
+> upper_bound 가 비원자적 write 경쟁으로 원래 비결정적이라 판정은
+> 마스크 일치/tick0 일치/GT RMSE 동등성으로 한다). 본학습(5000 iter)은
+> batched 백엔드 + 192 env 로 진행 (~15h 예상).
+
 계획서: docs/emcupy_student_plan.md. 코드는 모두 구현·커밋된 상태이고,
 아래는 GPU 가 빌 때 실행할 런타임 검증이다. 모든 명령은 env_isaaclab 환경에서.
 CPU 단위 테스트(0단계)만 VRAM 없이 언제든 가능하다.
