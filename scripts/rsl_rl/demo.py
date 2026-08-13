@@ -696,11 +696,11 @@ def main():
     num_scan = actor_param.num_scan
     num_prop = actor_param.num_prop
     obs, extras = demo_go2.env.reset()
-    # 관측의 지형 타입 플래그를 한 번 찍어 둔다. observations.py 가
-    #   index 11 = (terrain_name != 'parkour_flat')  -> non-flat
-    #   index 12 = (terrain_name == 'parkour_flat')  -> flat
-    # 로 만드는 값이라, --terrain flat 이 실제로 먹었는지 여기서 바로 확인할 수 있다.
-    print(f"[demo] obs 지형 타입 플래그  non-flat(11)={obs[:, 11].tolist()}  flat(12)={obs[:, 12].tolist()}")
+    # 관측의 지형 타입 플래그. observations.py 가 이제 지형과 무관하게
+    #   index 11 = 1 (non-flat 고정), index 12 = 0 (flat 고정)
+    # 으로 만든다 — 실기에는 flat 감지 오라클이 없어 정책이 이 신호에 의존하지
+    # 않게 상수화했다. --terrain flat 은 지형 기하만 바꾸고 이 플래그는 안 바뀐다.
+    print(f"[demo] obs 지형 타입 플래그(상수)  non-flat(11)={obs[:, 11].tolist()}  flat(12)={obs[:, 12].tolist()}")
     try:
         run_loop(demo_go2, obs, extras, num_prop, num_scan, num_priv_explicit)
     finally:
