@@ -124,9 +124,15 @@ class EMStudentObservationsCfg:
             "em_map_length": 3.2,
             "em_backend": "batched",   # "loop" = em_cupy 인스턴스 직렬(회귀 비교용)
             "update_interval": 5,      # 센서 자연 프레임 0.1s = 10Hz (Q1)
-            "odom_pos_std": 0.01,      # odometry 백색잡음 σ_xyz [m] (Q4)
-            "odom_rot_std_deg": 0.5,   # odometry 백색잡음 σ_rpy [deg] (Q4)
             "range_std": 0.02,         # L1 거리 노이즈 σ [m] (스펙 ±2cm)
+            "ray_dir_std_deg": 0.2,    # L1 빔 지향(az/el) 백색잡음 σ [deg]
+            # odometry 위치 drift: tick 마다 Δ_meas = Δ_true·(1+b) + n 으로 오차 누적
+            "odom_scale_var": 0.02,        # b ~ N(0, 0.02) — 변화량 scale 오차 분산
+            "odom_pos_walk_std": 0.005,    # n ~ N(0, 0.005²) [m/tick] 위치 random walk
+            # yaw drift: Δ_meas = Δ_true + bias·dt + n (bias 는 reset 마다 재샘플)
+            "odom_yaw_bias_range_dps": (0.003, 0.008),  # gyro bias 크기 [deg/s], 부호 랜덤
+            "odom_yaw_walk_std_deg": 0.003,  # yaw random walk σ [deg/tick]
+            "odom_rp_std_deg": 0.5,    # roll/pitch 백색잡음 σ [deg] (IMU 관측, 비누적)
             },
         )
 

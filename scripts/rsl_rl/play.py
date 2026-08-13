@@ -519,6 +519,9 @@ def main():
                         obs[:, 7] = 1.5 * delta
                     obs_em = obs.clone()
                     obs_em[:, num_prop:num_prop + num_scan] = em_scan
+                    # 학습(learn_em)·배포와 동일: priv_explicit 은 estimator 추정값
+                    obs_em[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = \
+                        estimator.inference(obs_em[:, :num_prop])
                     actions = policy(obs_em, hist_encoding=True)
             else:
                 depth_camera = extras["observations"]['depth_camera'].to(env.device)

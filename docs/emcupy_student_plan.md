@@ -197,6 +197,10 @@ Parameter (확정값):
 
 - runner에서 obs 복제 후 scan 슬라이스 [53:185]만 EM 샘플로 교체해 student에 공급.
   teacher는 원본 obs(GT scandots) 사용 — 현행 구조와 동일한 이원화.
+- (2026-08-13 개정) student 입력의 priv_explicit 슬라이스 [185:194](base lin vel)는
+  GT 대신 **frozen estimator(teacher 단계 학습)의 추정값**으로 교체 — 배포
+  (play/evaluation의 EM 경로도 동일하게 치환)와 학습 입력 분포를 일치시킨다.
+  teacher label 은 GT obs 그대로(privileged 지도 신호).
 - `learn_vision` 기반의 단순화된 학습 루프 `learn_em`:
   - depth encoder/GRU/BPTT/hidden 워밍업 제거 (resume 스파이크 이슈 소멸).
   - 학습 파라미터 = `depth_actor.parameters()` (scan_encoder 포함, Q6: 전체 fine-tune).
@@ -253,9 +257,18 @@ Q1 결정: **10Hz(5 step) 고정, 센서 자연 프레임(0.1s=1.1회전) 그대
 | Q8 | ceiling 필터(max_height_range/ramped) 기본값으로 적용 — ramp/stair 지형이라 무해 |
 
 잔여 가정 (기본값으로 진행, 조정 가능):
-- odometry 노이즈: **백색 잡음 σ_xyz=0.01m, σ_rpy=0.5°**, EM tick마다 독립 샘플.
-  (드리프트형 누적 오차 모델은 후속 단계 옵션.)
-- lidar range 노이즈: **σ=0.02m 적용** (L1 스펙 ±2cm; lidar 브랜치와 동일 값). 끌 수 있게
+- odometry 노이즈 (2026-08-13 개정, 사용자 지시로 drift 모델 도입): EM tick마다
+  변화량 기반 오차 누적으로 **시간에 따라 오차가 커진다**.
+  - 위치(xyz): `Δ_meas = Δ_true·(1+b) + n`, `b~N(0, 0.02)`, `n~N(0, 0.005²)`
+    (0.5m/s 보행 20s 기준 σ≈0.125m).
+  - yaw: `Δ_meas = Δ_true + bias·dt + n` — bias는 reset마다 크기 uniform
+    [0.003, 0.008] deg/s·부호 랜덤으로 재샘플되는 gyro 상수 bias,
+    `n~N(0, (0.003°)²)`/tick (20s 기준 오차 ≲0.2°: bias 선형 + walk √t).
+  - roll/pitch: IMU(중력) 관측으로 드리프트하지 않으므로 백색잡음 σ=0.5° 유지.
+  - scandots 샘플도 odom frame pose(노이즈 포함)로 수행 — 실기에서 map과 query가
+    같은 odometry를 공유하므로 상대 오차(셀 관측 이후 drift)만 남는 구조를 재현.
+- lidar 노이즈: range **σ=0.02m** (L1 스펙 ±2cm) + 빔 지향(az/el) 백색잡음
+  **σ=0.2°**(2026-08-13 추가; 어긋난 방향에 측정 거리를 놓는 근사). 끌 수 있게
   플래그화.
 - Q7 게이트 수치(RMSE 0.05m / invalid 20%)는 제안 기본값 — Phase 2 실측 후 재조정 가능.
 
