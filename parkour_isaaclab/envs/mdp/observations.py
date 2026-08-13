@@ -56,9 +56,14 @@ class ExtremeParkourObservations(ManagerTermBase):
         history_length: int,
         ) -> torch.Tensor:
         
-        terrain_names = self.parkour_event.env_per_terrain_name
-        env_idx_tensor = torch.tensor((terrain_names != 'parkour_flat')).to(dtype = torch.bool, device=self.device)
-        invert_env_idx_tensor = torch.tensor((terrain_names == 'parkour_flat')).to(dtype = torch.bool, device=self.device)
+        # 지형 타입(flat/non-flat) 플래그를 상수로 고정: 항상 non-flat=1, flat=0.
+        # 원조 Extreme Parkour 는 이 플래그로 flat 고속 모드 전환을 학습시켰지만,
+        # 이 프로젝트의 목표는 험지 robust 보행이고 실기에는 "지금 flat 이다"를
+        # 알려줄 오라클이 없다 — flat 감지 후 모드 전환을 실세계에서 재현할 수
+        # 없으므로 정책이 이 신호에 의존하지 않게 한다. 지형 종류 정보는 보상
+        # 셰이핑(rewards.py 의 parkour_flat 분기)에만 남는다 — 그쪽은 sim 전용이다.
+        env_idx_tensor = torch.ones(self.num_envs, 1, device=self.device)
+        invert_env_idx_tensor = torch.zeros(self.num_envs, 1, device=self.device)
         roll, pitch, yaw = euler_xyz_from_quat(self.asset.data.root_quat_w)
         imu_obs = torch.stack((wrap_to_pi(roll), wrap_to_pi(pitch)), dim=1).to(self.device)
         if env.common_step_counter % 5 == 0:
