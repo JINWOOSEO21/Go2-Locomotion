@@ -142,12 +142,12 @@ def test_sampling():
     cz = 1.7
     maps, centers = make(cz)
     maps[:, 2] = 1.0
-    h, vf = fn(maps, centers, torch.zeros(N, P, 2), torch.tensor([0.3 + cz]), res, cell_n)
+    h, vf, uf = fn(maps, centers, torch.zeros(N, P, 2), torch.tensor([0.3 + cz]), res, cell_n)
     check("3a.flat_teacher_zero", abs(float(h)) < 1e-6 and float(vf) > 0.99, f"(h={float(h):.4f})")
 
     # (b) teacher 식: 셀 높이 +0.2 (지형이 20cm 위) → h_obs = base_z − (0.2+cz) − 0.3
     maps[:, 0] = 0.2
-    h, _ = fn(maps, centers, torch.zeros(N, P, 2), torch.tensor([0.3 + cz]), res, cell_n)
+    h, _, _ = fn(maps, centers, torch.zeros(N, P, 2), torch.tensor([0.3 + cz]), res, cell_n)
     check("3b.height_formula", abs(float(h) + 0.2) < 1e-6, f"(h={float(h):.4f}, 기대 -0.2)")
 
     # (c) bilinear: 인접 두 셀 0 / 0.1, 그 중간점 → 0.05
@@ -157,33 +157,34 @@ def test_sampling():
     maps[:, 0, i0, :] = 0.0
     maps[:, 0, i0 + 1, :] = 0.1
     x_mid = (i0 + 1.0 - 0.5 * cell_n) * res  # 두 셀 중심의 중간
-    h, _ = fn(maps, centers, torch.tensor([[[x_mid, 0.0]]]), torch.tensor([0.3]), res, cell_n)
+    h, _, _ = fn(maps, centers, torch.tensor([[[x_mid, 0.0]]]), torch.tensor([0.3]), res, cell_n)
     check("3c.bilinear_mid", abs(float(h) + 0.05) < 1e-6, f"(h={float(h):.4f}, 기대 -0.05)")
 
     # (d) cascade 2단계: valid 없음 + upper_bound 만 → ub 사용
     maps, centers = make(0.0)
     maps[:, 5] = 0.15
     maps[:, 6] = 1.0
-    h, vf = fn(maps, centers, torch.zeros(N, P, 2), torch.tensor([0.3]), res, cell_n)
-    check("3d.cascade_upper_bound", abs(float(h) + 0.15) < 1e-6 and float(vf) < 1e-6, f"(h={float(h):.4f})")
+    h, vf, uf = fn(maps, centers, torch.zeros(N, P, 2), torch.tensor([0.3]), res, cell_n)
+    check("3d.cascade_upper_bound",
+          abs(float(h) + 0.15) < 1e-6 and float(vf) < 1e-6 and float(uf) > 0.99, f"(h={float(h):.4f})")
 
     # (e) cascade 3단계: 아무것도 없음 → 0 (base 기준 평지 가정)
     maps, centers = make(0.0)
-    h, _ = fn(maps, centers, torch.zeros(N, P, 2), torch.tensor([1.0]), res, cell_n)
+    h, _, _ = fn(maps, centers, torch.zeros(N, P, 2), torch.tensor([1.0]), res, cell_n)
     check("3e.cascade_fallback_zero", abs(float(h)) < 1e-9)
 
     # (f) 보더 링/맵 밖은 invalid → fallback 0
     maps, centers = make(0.0)
     maps[:, 2] = 1.0
     far = torch.tensor([[[10.0, 0.0]]])
-    h, vf = fn(maps, centers, far, torch.tensor([0.3]), res, cell_n)
-    check("3f.outside_map_fallback", abs(float(h)) < 1e-9 and float(vf) < 1e-6)
+    h, vf, uf = fn(maps, centers, far, torch.tensor([0.3]), res, cell_n)
+    check("3f.outside_map_fallback", abs(float(h)) < 1e-9 and float(vf) < 1e-6 and float(uf) < 1e-6)
 
     # (g) clip 범위 ±1
     maps, centers = make(0.0)
     maps[:, 2] = 1.0
     maps[:, 0] = -5.0
-    h, _ = fn(maps, centers, torch.zeros(N, P, 2), torch.tensor([0.3]), res, cell_n)
+    h, _, _ = fn(maps, centers, torch.zeros(N, P, 2), torch.tensor([0.3]), res, cell_n)
     check("3g.clip", abs(float(h) - 1.0) < 1e-6)
 
 

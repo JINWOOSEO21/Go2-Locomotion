@@ -25,9 +25,17 @@ import time
 import torch
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, REPO)
 
-from parkour_isaaclab.envs.mdp.elevation_map_backend import ElevationMapBackend  # noqa: E402
+# 패키지 경로(parkour_isaaclab.envs.__init__)가 isaaclab→pxr 를 끌고 오므로
+# (SimulationApp 없이는 import 불가), 백엔드 모듈만 파일에서 직접 로드한다.
+import importlib.util as _ilu  # noqa: E402
+
+_spec = _ilu.spec_from_file_location(
+    "em_backend_standalone", os.path.join(REPO, "parkour_isaaclab/envs/mdp/elevation_map_backend.py")
+)
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+ElevationMapBackend = _mod.ElevationMapBackend
 
 
 def make_scandot_offsets(device):
@@ -131,7 +139,7 @@ def main():
         torch.cuda.synchronize()
         t0 = time.time()
         backend.update(pts_list, R_s, t_s, base_pos, R_base)
-        h_obs, valid_frac = backend.sample(
+        h_obs, valid_frac, ub_frac = backend.sample(
             base_pos[:, :2].unsqueeze(1) + offsets.unsqueeze(0), base_pos[:, 2]
         )
         torch.cuda.synchronize()
@@ -141,12 +149,13 @@ def main():
         px = base_pos[:, 0:1] + offsets[None, :, 0]
         h_gt = torch.clip(base_pos[:, 2:3] - terrain_height(px) - 0.3, -1, 1)
         observed = valid_frac > 1e-6
+        unknown = (valid_frac <= 1e-6) & (ub_frac <= 1e-6)  # 관측도 상한도 없음
         if observed.any():
             rmse = float(torch.sqrt(((h_obs - h_gt)[observed] ** 2).mean()))
         else:
             rmse = float("nan")
         rmse_hist.append(rmse)
-        invalid_hist.append(1.0 - float(observed.float().mean()))
+        invalid_hist.append(float(unknown.float().mean()))
 
     warm = 10
     rmse_ss = sum(rmse_hist[warm:]) / len(rmse_hist[warm:])
@@ -154,7 +163,7 @@ def main():
     ms_ss = sum(tick_ms[warm:]) / len(tick_ms[warm:])
     log(f"[tick ] mean {ms_ss:.1f} ms/tick ({ms_ss/n:.2f} ms/env) after warmup "
         f"(first tick {tick_ms[0]:.0f} ms incl. kernel compile)")
-    log(f"[gate ] RMSE(valid) {rmse_ss:.4f} m (< 0.05 목표) | invalid {inv_ss*100:.1f}% (< 20% 목표)")
+    log(f"[gate ] RMSE(valid) {rmse_ss:.4f} m (< 0.05 목표) | unknown {inv_ss*100:.1f}% (< 20% 목표)")
     log(f"[vram ] torch allocated {torch.cuda.memory_allocated()/2**20:.0f} MiB "
         f"(cupy pool 은 별도 — nvidia-smi 로 총량 확인)")
     ok = rmse_ss < 0.05 and inv_ss < 0.20
