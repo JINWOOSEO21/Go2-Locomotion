@@ -165,10 +165,18 @@ class elevation_map_scan(ManagerTermBase):
         self.lidar = env.scene.sensors[cfg.params["sensor_cfg"].name]
         self.asset: Articulation = env.scene[cfg.params["asset_cfg"].name]
         self.update_interval = int(cfg.params.get("update_interval", 5))
-        # 노이즈 (계획서 §5 잔여 가정): EM 입력에만 걸리고 policy obs(GT)는 무관.
-        self.odom_pos_std = float(cfg.params.get("odom_pos_std", 0.01))
-        self.odom_rot_std_rad = float(np.deg2rad(cfg.params.get("odom_rot_std_deg", 0.5)))
+        # 노이즈 — 전부 EM 입력에만 걸리고 policy obs(GT)는 무관.
+        # L1 측정: 거리(range) 백색잡음 + 빔 지향(az/el) 백색잡음.
         self.range_std = float(cfg.params.get("range_std", 0.02))
+        self.ray_dir_std_rad = float(np.deg2rad(cfg.params.get("ray_dir_std_deg", 0.2)))
+        # odometry: 변화량 기반 drift 모델. tick 마다
+        #   Δ_meas = Δ_true·(1+b) + n,  b~N(0, odom_scale_var), n~N(0, walk_std²)
+        # 이므로 오차 증분 = Δ_true·b + n 이 누적되어 시간에 따라 커진다(위치·yaw).
+        # roll/pitch 는 중력(IMU) 관측으로 드리프트하지 않으므로 백색잡음만 남긴다.
+        self.odom_scale_std = float(cfg.params.get("odom_scale_var", 0.02)) ** 0.5
+        self.odom_pos_walk_std = float(cfg.params.get("odom_pos_walk_std", 0.005))
+        self.odom_yaw_walk_std = float(cfg.params.get("odom_yaw_walk_std_rad", 0.005))
+        self.odom_rp_std_rad = float(np.deg2rad(cfg.params.get("odom_rp_std_deg", 0.5)))
 
         # scandot 격자는 teacher 의 height_scanner 에서 그대로 가져온다 —
         # ray_starts 는 (base frame) 패턴점 + cfg offset(+0.375m) 이라 순서/위치가
@@ -212,6 +220,13 @@ class elevation_map_scan(ManagerTermBase):
         self.h_obs = torch.zeros(self.num_envs, self.num_points, device=self.device)
         self.valid_frac = torch.zeros(self.num_envs, self.num_points, device=self.device)
         self.ub_frac = torch.zeros(self.num_envs, self.num_points, device=self.device)
+        # odometry drift 상태 — EM tick 간 유지, env reset 시 0 에서 다시 시작
+        # (실기에서 odometry 는 에피소드 시작점 기준으로 초기화된다).
+        self._odom_pos_err = torch.zeros(self.num_envs, 3, device=self.device)
+        self._odom_yaw_err = torch.zeros(self.num_envs, device=self.device)
+        self._prev_base_pos = torch.zeros(self.num_envs, 3, device=self.device)
+        self._prev_base_yaw = torch.zeros(self.num_envs, device=self.device)
+        self._odom_needs_init = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
         # 검증 스크립트(scripts/emcupy_check)가 valid_frac 등에 접근할 수 있게 노출
         env.em_scan_term = self
 
@@ -223,6 +238,10 @@ class elevation_map_scan(ManagerTermBase):
         self.h_obs[env_ids] = 0.0
         self.valid_frac[env_ids] = 0.0
         self.ub_frac[env_ids] = 0.0
+        self._odom_pos_err[env_ids] = 0.0
+        self._odom_yaw_err[env_ids] = 0.0
+        # teleport 직후 pose 로 prev 를 다시 잡아야 하므로 다음 tick 에서 재초기화
+        self._odom_needs_init[env_ids] = True
 
     def __call__(
         self,
@@ -236,9 +255,12 @@ class elevation_map_scan(ManagerTermBase):
         em_map_length: float = 3.2,
         em_backend: str = "batched",
         update_interval: int = 5,
-        odom_pos_std: float = 0.01,
-        odom_rot_std_deg: float = 0.5,
         range_std: float = 0.02,
+        ray_dir_std_deg: float = 0.2,
+        odom_scale_var: float = 0.02,
+        odom_pos_walk_std: float = 0.005,
+        odom_yaw_walk_std_rad: float = 0.005,
+        odom_rp_std_deg: float = 0.5,
     ) -> torch.Tensor:
         # 센서 프레임(0.1s)과 같은 위상: 기존 depth/scandots 의 %5 게이트와 일치.
         if env.common_step_counter % self.update_interval == 0:
@@ -275,53 +297,99 @@ class elevation_map_scan(ManagerTermBase):
             self_hit |= ray_capsule_penetrates(origins, dirs, t_hit, pa, pb, radius)
         valid = finite & ~self_hit
 
-        # L1 거리 노이즈 (스펙 ±2cm). 방향은 결정론이라 range 에만 건다.
+        # L1 거리 노이즈 (스펙 ±2cm): range 백색잡음.
         if self.range_std > 0:
             t_hit = (t_hit + torch.randn_like(t_hit) * self.range_std).clamp_min(0.0)
-        points_w = origins + dirs * t_hit.unsqueeze(-1)
 
         # 센서 pose (GT) — 점군을 센서 프레임으로 되돌리는 데 쓴다. 실기에서 점군은
         # 애초에 센서 프레임으로 들어오므로 이 변환에는 odometry 오차가 없다.
         t_s = origins[:, 0, :]
         R_base = matrix_from_quat(self.asset.data.root_quat_w)
         R_s = torch.bmm(R_base, self._R_offset.expand(self.num_envs, 3, 3))
-        p_rel = points_w - t_s.unsqueeze(1)
-        points_sensor = torch.einsum("nij,nri->nrj", R_s, p_rel)  # R_sᵀ (p−t)
+        # 전 ray 가 공통 원점이라 p_sensor = (R_sᵀ d_w) · t_hit
+        dirs_sensor = torch.einsum("nij,nri->nrj", R_s, dirs)
 
-        # odometry(6D pose) 백색잡음 — EM 이 아는 "odom frame 상의 pose" 에만 건다.
-        base_pos = self.asset.data.root_pos_w
-        if self.odom_pos_std > 0 or self.odom_rot_std_rad > 0:
-            d_pos = torch.randn(self.num_envs, 3, device=self.device) * self.odom_pos_std
-            d_rpy = torch.randn(self.num_envs, 3, device=self.device) * self.odom_rot_std_rad
-            # small-angle 회전: R_err ≈ I + [δθ]×
-            zeros = torch.zeros(self.num_envs, device=self.device)
-            skew = torch.stack(
-                [
-                    torch.stack([zeros, -d_rpy[:, 2], d_rpy[:, 1]], dim=-1),
-                    torch.stack([d_rpy[:, 2], zeros, -d_rpy[:, 0]], dim=-1),
-                    torch.stack([-d_rpy[:, 1], d_rpy[:, 0], zeros], dim=-1),
-                ],
-                dim=1,
+        # 빔 지향 노이즈: 실기 ray 방향은 공칭값과 어긋난다. 노이즈 방향으로
+        # 재캐스팅할 수는 없으므로 "실제 빔이 어긋난 방향으로 나갔는데 공칭 거리로
+        # 기록됐다"의 역, 즉 어긋난 방향에 측정 거리를 놓는 것으로 근사한다.
+        if self.ray_dir_std_rad > 0:
+            az = torch.atan2(dirs_sensor[..., 1], dirs_sensor[..., 0])
+            el = torch.asin(dirs_sensor[..., 2].clamp(-1.0, 1.0))
+            az = az + torch.randn_like(az) * self.ray_dir_std_rad
+            el = (el + torch.randn_like(el) * self.ray_dir_std_rad).clamp(-1.5707, 1.5707)
+            cos_el = torch.cos(el)
+            dirs_sensor = torch.stack(
+                [cos_el * torch.cos(az), cos_el * torch.sin(az), torch.sin(el)], dim=-1
             )
-            R_err = torch.eye(3, device=self.device).expand(self.num_envs, 3, 3) + skew
-            R_s_n = torch.bmm(R_err, R_s)
-            t_s_n = t_s + d_pos
-            base_pos_n = base_pos + d_pos
-            R_base_n = torch.bmm(R_err, R_base)
-        else:
-            R_s_n, t_s_n, base_pos_n, R_base_n = R_s, t_s, base_pos, R_base
+        points_sensor = dirs_sensor * t_hit.unsqueeze(-1)
+
+        # odometry drift — EM 이 아는 "odom frame 상의 pose" 에만 건다.
+        # 변화량 모델: Δ_meas = Δ_true·(1+b) + n → 오차 증분 Δ_true·b + n 누적.
+        base_pos = self.asset.data.root_pos_w
+        _, _, yaw_now = euler_xyz_from_quat(self.asset.data.root_quat_w)
+        yaw_now = wrap_to_pi(yaw_now)
+        if self._odom_needs_init.any():
+            ids = self._odom_needs_init
+            self._prev_base_pos[ids] = base_pos[ids]
+            self._prev_base_yaw[ids] = yaw_now[ids]
+            self._odom_needs_init[:] = False
+        d_pos_true = base_pos - self._prev_base_pos
+        d_yaw_true = wrap_to_pi(yaw_now - self._prev_base_yaw)
+        self._prev_base_pos = base_pos.clone()
+        self._prev_base_yaw = yaw_now.clone()
+        if self.odom_scale_std > 0 or self.odom_pos_walk_std > 0:
+            b_pos = torch.randn(self.num_envs, 3, device=self.device) * self.odom_scale_std
+            n_pos = torch.randn(self.num_envs, 3, device=self.device) * self.odom_pos_walk_std
+            self._odom_pos_err += d_pos_true * b_pos + n_pos
+        if self.odom_scale_std > 0 or self.odom_yaw_walk_std > 0:
+            b_yaw = torch.randn(self.num_envs, device=self.device) * self.odom_scale_std
+            n_yaw = torch.randn(self.num_envs, device=self.device) * self.odom_yaw_walk_std
+            self._odom_yaw_err += d_yaw_true * b_yaw + n_yaw
+
+        # 회전 오차 = (roll/pitch 백색, small-angle) ∘ Rz(누적 yaw drift)
+        zeros = torch.zeros(self.num_envs, device=self.device)
+        ones = torch.ones(self.num_envs, device=self.device)
+        cz, sz = torch.cos(self._odom_yaw_err), torch.sin(self._odom_yaw_err)
+        R_z = torch.stack(
+            [
+                torch.stack([cz, -sz, zeros], dim=-1),
+                torch.stack([sz, cz, zeros], dim=-1),
+                torch.stack([zeros, zeros, ones], dim=-1),
+            ],
+            dim=1,
+        )
+        d_rp = torch.randn(self.num_envs, 2, device=self.device) * self.odom_rp_std_rad
+        skew_rp = torch.stack(
+            [
+                torch.stack([zeros, zeros, d_rp[:, 1]], dim=-1),
+                torch.stack([zeros, zeros, -d_rp[:, 0]], dim=-1),
+                torch.stack([-d_rp[:, 1], d_rp[:, 0], zeros], dim=-1),
+            ],
+            dim=1,
+        )
+        R_err = torch.bmm(
+            torch.eye(3, device=self.device).expand(self.num_envs, 3, 3) + skew_rp, R_z
+        )
+        R_s_n = torch.bmm(R_err, R_s)
+        t_s_n = t_s + self._odom_pos_err
+        base_pos_n = base_pos + self._odom_pos_err
+        R_base_n = torch.bmm(R_err, R_base)
 
         pts_list = [points_sensor[i][valid[i]] for i in range(self.num_envs)]
         self.backend.update(pts_list, R_s_n, t_s_n, base_pos_n, R_base_n)
 
-        # scandot 위치(ray_alignment="yaw" 와 동일: yaw 만 따라 회전) 에서 샘플
-        _, _, yaw = euler_xyz_from_quat(self.asset.data.root_quat_w)
-        cy, sy = torch.cos(yaw), torch.sin(yaw)
+        # scandot 위치(ray_alignment="yaw" 와 동일: yaw 만 따라 회전) 에서 샘플.
+        # 실기에서 query pose 도 같은 odometry 에서 나오므로 map 과 같은 odom frame
+        # 을 쓴다 — GT pose 로 샘플하면 누적 drift 전체가 query 오차로 들어가
+        # 실제보다 훨씬 비관적인(틀린) 관측이 된다. odom frame 을 쓰면 map−query
+        # 간 상대 오차(= 셀 관측 시점 이후의 drift)만 남는다.
+        yaw_n = yaw_now + self._odom_yaw_err
+        cy, sy = torch.cos(yaw_n), torch.sin(yaw_n)
         ox, oy = self._scan_offsets_xy[:, 0], self._scan_offsets_xy[:, 1]
-        px = base_pos[:, 0:1] + cy[:, None] * ox[None, :] - sy[:, None] * oy[None, :]
-        py = base_pos[:, 1:2] + sy[:, None] * ox[None, :] + cy[:, None] * oy[None, :]
+        px = base_pos_n[:, 0:1] + cy[:, None] * ox[None, :] - sy[:, None] * oy[None, :]
+        py = base_pos_n[:, 1:2] + sy[:, None] * ox[None, :] + cy[:, None] * oy[None, :]
         points_xy = torch.stack([px, py], dim=-1)
-        self.h_obs, self.valid_frac, self.ub_frac = self.backend.sample(points_xy, base_pos[:, 2])
+        self.h_obs, self.valid_frac, self.ub_frac = self.backend.sample(points_xy, base_pos_n[:, 2])
 
 
 class image_features(ManagerTermBase):
