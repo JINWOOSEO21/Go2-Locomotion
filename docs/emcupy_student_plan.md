@@ -197,6 +197,10 @@ Parameter (확정값):
 
 - runner에서 obs 복제 후 scan 슬라이스 [53:185]만 EM 샘플로 교체해 student에 공급.
   teacher는 원본 obs(GT scandots) 사용 — 현행 구조와 동일한 이원화.
+- (2026-08-13 개정) student 입력의 priv_explicit 슬라이스 [185:194](base lin vel)는
+  GT 대신 **frozen estimator(teacher 단계 학습)의 추정값**으로 교체 — 배포
+  (play/evaluation의 EM 경로도 동일하게 치환)와 학습 입력 분포를 일치시킨다.
+  teacher label 은 GT obs 그대로(privileged 지도 신호).
 - `learn_vision` 기반의 단순화된 학습 루프 `learn_em`:
   - depth encoder/GRU/BPTT/hidden 워밍업 제거 (resume 스파이크 이슈 소멸).
   - 학습 파라미터 = `depth_actor.parameters()` (scan_encoder 포함, Q6: 전체 fine-tune).

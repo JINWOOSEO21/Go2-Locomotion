@@ -500,6 +500,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             self.alg.broadcast_parameters()
 
         num_prop, num_scan = self.alg.num_prop, self.alg.num_scan
+        num_priv = self.alg.priv_states_dim
         start_iter = self.current_learning_iteration
         tot_iter = self.current_learning_iteration + num_learning_iterations
         for it in range(start_iter, tot_iter):
@@ -509,6 +510,11 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                 obs_student = obs.clone()
                 obs_student[:, num_prop:num_prop + num_scan] = em_scan
                 with torch.no_grad():
+                    # priv_explicit(base lin vel) 자리는 배포와 동일하게 frozen
+                    # estimator(teacher 단계에서 학습됨)의 추정값을 쓴다.
+                    # teacher label 은 GT obs 그대로 — privileged 지도 신호.
+                    obs_student[:, num_prop + num_scan:num_prop + num_scan + num_priv] = \
+                        self.alg.estimator(obs_student[:, :num_prop])
                     actions_teacher = self.alg.policy.act_inference(obs, hist_encoding=True, scandots_latent=None)
                 # scandots_latent=None → depth_actor 의 자체 scan_encoder(teacher init)
                 # 가 em_scan 구간을 인코딩한다. 여기가 유일한 학습 경로다.
