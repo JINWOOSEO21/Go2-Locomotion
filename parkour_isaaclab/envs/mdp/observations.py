@@ -151,7 +151,10 @@ class elevation_map_scan(ManagerTermBase):
     def __init__(self, cfg: ObservationTermCfg, env: ParkourManagerBasedRLEnv):
         super().__init__(cfg, env)
         from parkour_isaaclab.sensors import GO2_SELF_FILTER_CAPSULES
-        from parkour_isaaclab.envs.mdp.elevation_map_backend import ElevationMapBackend
+        from parkour_isaaclab.envs.mdp.elevation_map_backend import (
+            BatchedElevationMapBackend,
+            ElevationMapBackend,
+        )
 
         self.env = env
         self.lidar = env.scene.sensors[cfg.params["sensor_cfg"].name]
@@ -169,7 +172,14 @@ class elevation_map_scan(ManagerTermBase):
         self._scan_offsets_xy = scanner.ray_starts[0][:, :2].clone().to(self.device)
         self.num_points = self._scan_offsets_xy.shape[0]
 
-        self.backend = ElevationMapBackend(
+        # "batched"(기본): 커널 배치판 — 192 env 기준 tick 당 수 ms.
+        # "loop": em_cupy 인스턴스 직렬 루프 — 회귀 비교/디버깅용 (250ms/tick).
+        backend_cls = (
+            BatchedElevationMapBackend
+            if cfg.params.get("em_backend", "batched") == "batched"
+            else ElevationMapBackend
+        )
+        self.backend = backend_cls(
             num_envs=self.num_envs,
             device=self.device,
             resolution=float(cfg.params.get("em_resolution", 0.1)),
@@ -219,6 +229,7 @@ class elevation_map_scan(ManagerTermBase):
         # 필수 파라미터로 오해석된다).
         em_resolution: float = 0.1,
         em_map_length: float = 3.2,
+        em_backend: str = "batched",
         update_interval: int = 5,
         odom_pos_std: float = 0.01,
         odom_rot_std_deg: float = 0.5,

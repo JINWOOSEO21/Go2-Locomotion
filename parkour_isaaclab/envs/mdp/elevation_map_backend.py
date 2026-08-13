@@ -267,3 +267,529 @@ class ElevationMapBackend:
         return sample_scan_heights(
             self.layers(), self.centers(), points_xy, base_z, self.resolution, self.cell_n
         )
+
+
+# ---------------------------------------------------------------------------
+# Batched 포트 (계획서 §2.4 Phase 3′)
+#
+# 위 ElevationMapBackend(인스턴스 루프)는 tick 당 인스턴스 x 커널 ~8회의 런치
+# 오버헤드가 지배해 192 env 실측 250ms/tick 이었다. 아래는 em_cupy 의 커널
+# 소스(MIT, Takahiro Miki)를 env 배치 차원이 있는 형태로 수정해 tick 당 커널
+# 몇 회로 줄인 것이다. 수식/셀 인덱싱/upper_bound 로직은 stock 과 동일하며,
+# 회귀 테스트(scripts/emcupy_check/regression_batched.py)가 동일 입력 → 동일
+# 출력을 검증한다. stock 과 맞추기 위한 재현 사항:
+#  - error_counting 커널 포함 (newmap 의 점 카운트 레이어 3,4 를 add_points 의
+#    wall-sharpening/cleanup 분기가 읽는다 — 드리프트 보정이 꺼져 있어도 필요)
+#  - traversability CNN 스텁의 부작용(map layer3 내부=0) 재현 — 다음 tick 의
+#    error_counting inlier 판정이 이 레이어를 본다
+# ---------------------------------------------------------------------------
+
+import string  # noqa: E402
+
+
+def _batched_preamble(res, n, sensor_noise_factor, min_valid_distance, max_height_range,
+                      ra, rb, rc):
+    """map_utils 의 배치판: get_map_idx 가 env 번호 b 를 받는다. width==height==n."""
+    return string.Template(
+        """
+        __device__ float16 clamp(float16 x, float16 min_x, float16 max_x) {
+            return max(min(x, max_x), min_x);
+        }
+        __device__ int get_x_idx(float16 x, float16 center) {
+            int i = (x - center) / ${res} + 0.5 * ${n};
+            return i;
+        }
+        __device__ int get_y_idx(float16 y, float16 center) {
+            int i = (y - center) / ${res} + 0.5 * ${n};
+            return i;
+        }
+        __device__ bool is_inside(int idx) {
+            int idx_x = idx / ${n};
+            int idx_y = idx % ${n};
+            if (idx_x == 0 || idx_x == ${n} - 1) { return false; }
+            if (idx_y == 0 || idx_y == ${n} - 1) { return false; }
+            return true;
+        }
+        __device__ int get_idx(float16 x, float16 y, float16 center_x, float16 center_y) {
+            int idx_x = clamp(get_x_idx(x, center_x), 0, ${n} - 1);
+            int idx_y = clamp(get_y_idx(y, center_y), 0, ${n} - 1);
+            return ${n} * idx_x + idx_y;
+        }
+        __device__ int get_map_idx(int b, int idx, int layer_n) {
+            return (b * 7 + layer_n) * ${n} * ${n} + idx;
+        }
+        __device__ int get_norm_idx(int b, int idx, int layer_n) {
+            return (b * 3 + layer_n) * ${n} * ${n} + idx;
+        }
+        __device__ float transform_p(float16 x, float16 y, float16 z,
+                                     float16 r0, float16 r1, float16 r2, float16 t) {
+            return r0 * x + r1 * y + r2 * z + t;
+        }
+        __device__ float z_noise(float16 z){ return ${sensor_noise_factor} * z * z; }
+        __device__ float point_sensor_distance(float16 x, float16 y, float16 z,
+                                               float16 sx, float16 sy, float16 sz) {
+            return (x - sx) * (x - sx) + (y - sy) * (y - sy) + (z - sz) * (z - sz);
+        }
+        __device__ bool is_valid(float16 x, float16 y, float16 z,
+                               float16 sx, float16 sy, float16 sz) {
+            float d = point_sensor_distance(x, y, z, sx, sy, sz);
+            float dxy = max(sqrt(x * x + y * y) - ${rb}, 0.0);
+            if (d < ${min_valid_distance} * ${min_valid_distance}) { return false; }
+            else if (z - sz > dxy * ${ra} + ${rc} || z - sz > ${max_height_range}) { return false; }
+            else { return true; }
+        }
+        __device__ float ray_vector(float16 tx, float16 ty, float16 tz,
+                                    float16 px, float16 py, float16 pz,
+                                    float16& rx, float16& ry, float16& rz){
+            float16 vx = px - tx; float16 vy = py - ty; float16 vz = pz - tz;
+            float16 norm = sqrt(vx * vx + vy * vy + vz * vz);
+            if (norm > 0) { rx = vx / norm; ry = vy / norm; rz = vz / norm; }
+            else { rx = 0; ry = 0; rz = 0; }
+            return norm;
+        }
+        __device__ float inner_product(float16 x1, float16 y1, float16 z1,
+                                       float16 x2, float16 y2, float16 z2) {
+            return (x1 * x2 + y1 * y2 + z1 * z2);
+        }
+        """
+    ).substitute(res=res, n=n, sensor_noise_factor=sensor_noise_factor,
+                 min_valid_distance=min_valid_distance, max_height_range=max_height_range,
+                 ra=ra, rb=rb, rc=rc)
+
+
+class BatchedElevationMapBackend:
+    """ElevationMapBackend 와 동일 인터페이스의 batched 구현.
+
+    맵을 (B,7,n,n) 단일 cupy 배열로 유지하고 tick 당 커널 5회
+    (error_counting/add_points/average/dilation/normal)로 전 env 를 갱신한다.
+    move_to(그리드 roll)와 시간/분산 갱신은 torch 배치 연산으로 대체.
+    """
+
+    def __init__(
+        self,
+        num_envs: int,
+        device: str,
+        resolution: float = 0.1,
+        map_length: float = 3.2,
+        sensor_noise_factor: float = 0.05,
+        min_valid_distance: float = 0.10,
+        max_ray_length: float = 3.0,
+        enable_visibility_cleanup: bool = True,
+    ):
+        cp, _ElevationMap, Parameter, root = _import_emcupy()
+        self.cp = cp
+        self.device = device
+        self.num_envs = int(num_envs)
+        self.resolution = float(resolution)
+
+        # 파라미터는 stock Parameter 의 기본값 체계를 그대로 따른다 (값 비교 회귀의 전제)
+        p = Parameter()
+        p.resolution = float(resolution)
+        p.map_length = float(map_length)
+        p.update()
+        self.param = p
+        self.cell_n = int(p.cell_n)
+        n, B = self.cell_n, self.num_envs
+
+        self.initial_variance = float(p.initial_variance)
+        self.time_variance = float(p.time_variance)
+        self.time_interval = float(p.time_interval)
+
+        self.maps = cp.zeros((B, 7, n, n), dtype=cp.float32)
+        self.maps[:, 1] += self.initial_variance
+        self.maps[:, 3] += 1.0
+        self.newmap = cp.zeros((B, 7, n, n), dtype=cp.float32)
+        self.norm = cp.zeros((B, 3, n, n), dtype=cp.float32)
+        self.dil = cp.zeros((B, n, n), dtype=cp.float32)
+        self.dil_mask = cp.zeros((B, n, n), dtype=cp.float32)
+        self.centers = torch.zeros(B, 3, device=device)
+        self._zeros_b = cp.zeros(B, dtype=cp.float32)  # center_x/center_y (사전 차감이라 0)
+        self._err = cp.zeros(B, dtype=cp.float32)
+        self._err_cnt = cp.zeros(B, dtype=cp.float32)
+
+        pre = _batched_preamble(
+            p.resolution, n, p.sensor_noise_factor, float(min_valid_distance),
+            p.max_height_range, p.ramped_height_range_a, p.ramped_height_range_b,
+            p.ramped_height_range_c,
+        )
+
+        # --- add_points (stock custom_kernels.add_points_kernel 의 배치판) ---
+        self._add_points = cp.ElementwiseKernel(
+            in_params="raw U center_x, raw U center_y, raw U R, raw U t, raw U norm_map, raw int32 env_id",
+            out_params="raw U p, raw U map, raw T newmap",
+            preamble=pre,
+            operation=string.Template(
+                """
+                int b = env_id[i];
+                U rx = p[i * 3];
+                U ry = p[i * 3 + 1];
+                U rz = p[i * 3 + 2];
+                U x = transform_p(rx, ry, rz, R[b*9+0], R[b*9+1], R[b*9+2], t[b*3+0]);
+                U y = transform_p(rx, ry, rz, R[b*9+3], R[b*9+4], R[b*9+5], t[b*3+1]);
+                U z = transform_p(rx, ry, rz, R[b*9+6], R[b*9+7], R[b*9+8], t[b*3+2]);
+                U v = z_noise(rz);
+                int idx = get_idx(x, y, center_x[b], center_y[b]);
+                if (is_valid(x, y, z, t[b*3+0], t[b*3+1], t[b*3+2])) {
+                    if (is_inside(idx)) {
+                        U map_h = map[get_map_idx(b, idx, 0)];
+                        U map_v = map[get_map_idx(b, idx, 1)];
+                        U num_points = newmap[get_map_idx(b, idx, 4)];
+                        if (abs(map_h - z) > (map_v * ${mahalanobis_thresh})) {
+                            atomicAdd(&map[get_map_idx(b, idx, 1)], ${outlier_variance});
+                        }
+                        else {
+                            if (${enable_edge_shaped} && (num_points > ${wall_num_thresh}) && (z < map_h - map_v * ${mahalanobis_thresh} / num_points)) {
+                              // continue;
+                            }
+                            else {
+                                T new_h = (map_h * v + z * map_v) / (map_v + v);
+                                T new_v = (map_v * v) / (map_v + v);
+                                atomicAdd(&newmap[get_map_idx(b, idx, 0)], new_h);
+                                atomicAdd(&newmap[get_map_idx(b, idx, 1)], new_v);
+                                atomicAdd(&newmap[get_map_idx(b, idx, 2)], 1.0);
+                                map[get_map_idx(b, idx, 2)] = 1;
+                                map[get_map_idx(b, idx, 4)] = 0.0;
+                                map[get_map_idx(b, idx, 5)] = new_h;
+                                map[get_map_idx(b, idx, 6)] = 0.0;
+                            }
+                        }
+                    }
+                }
+                if (${enable_visibility_cleanup}) {
+                    float16 ray_x, ray_y, ray_z;
+                    float16 ray_length = ray_vector(t[b*3+0], t[b*3+1], t[b*3+2], x, y, z, ray_x, ray_y, ray_z);
+                    ray_length = min(ray_length, (float16)${max_ray_length});
+                    int last_nidx = -1;
+                    for (float16 s=${ray_step}; s < ray_length; s+=${ray_step}) {
+                        U nx = t[b*3+0] + ray_x * s;
+                        U ny = t[b*3+1] + ray_y * s;
+                        U nz = t[b*3+2] + ray_z * s;
+                        int nidx = get_idx(nx, ny, center_x[b], center_y[b]);
+                        if (last_nidx == nidx) {continue;}
+                        else {last_nidx = nidx;}
+                        if (!is_inside(nidx)) {continue;}
+
+                        U nmap_h = map[get_map_idx(b, nidx, 0)];
+                        U nmap_v = map[get_map_idx(b, nidx, 1)];
+                        U nmap_valid = map[get_map_idx(b, nidx, 2)];
+                        U non_updated_t = map[get_map_idx(b, nidx, 4)];
+                        U nmap_upper = map[get_map_idx(b, nidx, 5)];
+                        U nmap_is_upper = map[get_map_idx(b, nidx, 6)];
+
+                        float16 d = (x - nx) * (x - nx) + (y - ny) * (y - ny) + (z - nz) * (z - nz);
+                        if (d < 0.1 || !is_valid(x, y, z, t[b*3+0], t[b*3+1], t[b*3+2])) {continue;}
+
+                        if (nmap_valid < 0.5) {
+                          if (nz < nmap_upper || nmap_is_upper < 0.5) {
+                            map[get_map_idx(b, nidx, 5)] = nz;
+                            map[get_map_idx(b, nidx, 6)] = 1.0f;
+                          }
+                          continue;
+                        }
+                        if (non_updated_t < 0.5) {continue;}
+
+                        if (nmap_h > nz + 0.01 - min(nmap_v, 1.0) * 0.05) {
+                            U norm_x = norm_map[get_norm_idx(b, nidx, 0)];
+                            U norm_y = norm_map[get_norm_idx(b, nidx, 1)];
+                            U norm_z = norm_map[get_norm_idx(b, nidx, 2)];
+                            float product = inner_product(ray_x, ray_y, ray_z, norm_x, norm_y, norm_z);
+                            if (fabs(product) < ${cleanup_cos_thresh}) {continue;}
+                            U num_points = newmap[get_map_idx(b, nidx, 3)];
+                            if (num_points > ${wall_num_thresh} && non_updated_t < 1.0) {continue;}
+
+                            atomicAdd(&map[get_map_idx(b, nidx, 2)], -${cleanup_step}/(ray_length / ${max_ray_length}));
+                            atomicAdd(&map[get_map_idx(b, nidx, 1)], ${outlier_variance});
+                            if (nz < nmap_upper || nmap_is_upper < 0.5) {
+                                map[get_map_idx(b, nidx, 5)] = nz;
+                                map[get_map_idx(b, nidx, 6)] = 1.0f;
+                            }
+                        }
+                    }
+                }
+                p[i * 3]= idx;
+                p[i * 3 + 1] = is_valid(x, y, z, t[b*3+0], t[b*3+1], t[b*3+2]);
+                p[i * 3 + 2] = is_inside(idx);
+                """
+            ).substitute(
+                mahalanobis_thresh=p.mahalanobis_thresh,
+                outlier_variance=p.outlier_variance,
+                wall_num_thresh=p.wall_num_thresh,
+                ray_step=p.resolution / 2 ** 0.5,
+                max_ray_length=float(max_ray_length),
+                cleanup_step=p.cleanup_step,
+                cleanup_cos_thresh=p.cleanup_cos_thresh,
+                enable_edge_shaped=int(p.enable_edge_sharpen),
+                enable_visibility_cleanup=int(enable_visibility_cleanup),
+            ),
+            name="add_points_kernel_batched",
+        )
+
+        # --- error_counting (드리프트 보정은 안 쓰지만 newmap 점 카운트가 필요) ---
+        self._error_counting = cp.ElementwiseKernel(
+            in_params="raw U map, raw U p, raw U center_x, raw U center_y, raw U R, raw U t, raw int32 env_id",
+            out_params="raw U newmap, raw T error, raw T error_cnt",
+            preamble=pre,
+            operation=string.Template(
+                """
+                int b = env_id[i];
+                U rx = p[i * 3];
+                U ry = p[i * 3 + 1];
+                U rz = p[i * 3 + 2];
+                U x = transform_p(rx, ry, rz, R[b*9+0], R[b*9+1], R[b*9+2], t[b*3+0]);
+                U y = transform_p(rx, ry, rz, R[b*9+3], R[b*9+4], R[b*9+5], t[b*3+1]);
+                U z = transform_p(rx, ry, rz, R[b*9+6], R[b*9+7], R[b*9+8], t[b*3+2]);
+                if (!is_valid(x, y, z, t[b*3+0], t[b*3+1], t[b*3+2])) {return;}
+                int idx = get_idx(x, y, center_x[b], center_y[b]);
+                if (!is_inside(idx)) { return; }
+                U map_h = map[get_map_idx(b, idx, 0)];
+                U map_v = map[get_map_idx(b, idx, 1)];
+                U map_valid = map[get_map_idx(b, idx, 2)];
+                U map_t = map[get_map_idx(b, idx, 3)];
+                if (map_valid > 0.5 && (abs(map_h - z) < (map_v * ${mahalanobis_thresh}))
+                    && map_v < ${outlier_variance} / 2.0
+                    && map_t > ${traversability_inlier}) {
+                    T e = z - map_h;
+                    atomicAdd(&error[b], e);
+                    atomicAdd(&error_cnt[b], 1);
+                    atomicAdd(&newmap[get_map_idx(b, idx, 3)], 1.0);
+                }
+                atomicAdd(&newmap[get_map_idx(b, idx, 4)], 1.0);
+                """
+            ).substitute(
+                mahalanobis_thresh=p.mahalanobis_thresh,
+                outlier_variance=p.outlier_variance,
+                traversability_inlier=p.traversability_inlier,
+            ),
+            name="error_counting_kernel_batched",
+        )
+
+        # --- average_map: 셀 단위 elementwise (i 가 B*n*n 을 순회) ---
+        cell_pre = string.Template(
+            """
+            __device__ int get_map_idx(int b, int cell, int layer_n) {
+                return (b * 7 + layer_n) * ${n} * ${n} + cell;
+            }
+            """
+        ).substitute(n=n)
+        self._average_map = cp.ElementwiseKernel(
+            in_params="raw U newmap",
+            out_params="raw U map",
+            preamble=cell_pre,
+            operation=string.Template(
+                """
+                int cell = i % (${n} * ${n});
+                int b = i / (${n} * ${n});
+                U v = map[get_map_idx(b, cell, 1)];
+                U valid = map[get_map_idx(b, cell, 2)];
+                U new_h = newmap[get_map_idx(b, cell, 0)];
+                U new_v = newmap[get_map_idx(b, cell, 1)];
+                U new_cnt = newmap[get_map_idx(b, cell, 2)];
+                if (new_cnt > 0) {
+                    if (new_v / new_cnt > ${max_variance}) {
+                        map[get_map_idx(b, cell, 0)] = 0;
+                        map[get_map_idx(b, cell, 1)] = ${initial_variance};
+                        map[get_map_idx(b, cell, 2)] = 0;
+                    }
+                    else {
+                        map[get_map_idx(b, cell, 0)] = new_h / new_cnt;
+                        map[get_map_idx(b, cell, 1)] = new_v / new_cnt;
+                        map[get_map_idx(b, cell, 2)] = 1;
+                    }
+                }
+                if (valid < 0.5) {
+                    map[get_map_idx(b, cell, 0)] = 0;
+                    map[get_map_idx(b, cell, 1)] = ${initial_variance};
+                    map[get_map_idx(b, cell, 2)] = 0;
+                }
+                """
+            ).substitute(n=n, max_variance=p.max_variance, initial_variance=p.initial_variance),
+            name="average_map_kernel_batched",
+        )
+
+        # --- dilation + normal (셀 단위, env 경계를 넘지 않는 이웃 인덱싱) ---
+        nb_pre = string.Template(
+            """
+            __device__ bool cell_inside(int cx, int cy) {
+                if (cx <= 0 || cx >= ${n} - 1) { return false; }
+                if (cy <= 0 || cy >= ${n} - 1) { return false; }
+                return true;
+            }
+            __device__ int get_map_idx(int b, int cell, int layer_n) {
+                return (b * 7 + layer_n) * ${n} * ${n} + cell;
+            }
+            """
+        ).substitute(n=n)
+        self._dilation = cp.ElementwiseKernel(
+            in_params="raw U map, raw U mask",
+            out_params="raw U newmap, raw U newmask",
+            preamble=nb_pre,
+            operation=string.Template(
+                """
+                int cell = i % (${n} * ${n});
+                int base = i - cell;
+                int cx = cell / ${n};
+                int cy = cell % ${n};
+                U h = map[i];
+                U valid = mask[i];
+                newmap[i] = h;
+                if (valid < 0.5) {
+                    U distance = 100;
+                    U near_value = 0;
+                    for (int dy = -${d}; dy <= ${d}; dy++) {
+                        for (int dx = -${d}; dx <= ${d}; dx++) {
+                            if (!cell_inside(cx + dx, cy + dy)) {continue;}
+                            int nidx = base + cell + ${n} * dy + dx;
+                            U nvalid = mask[nidx];
+                            if(nvalid > 0.5 && dx + dy < distance) {
+                                distance = dx + dy;
+                                near_value = map[nidx];
+                            }
+                        }
+                    }
+                    if(distance < 100) {
+                        newmap[i] = near_value;
+                        newmask[i] = 1.0;
+                    }
+                }
+                """
+            ).substitute(n=n, d=p.dilation_size),
+            name="dilation_filter_kernel_batched",
+        )
+        self._normal = cp.ElementwiseKernel(
+            in_params="raw U dil, raw U map",
+            out_params="raw U newmap",
+            preamble=nb_pre,
+            operation=string.Template(
+                """
+                int cell = i % (${n} * ${n});
+                int b = i / (${n} * ${n});
+                int base = i - cell;
+                int cx = cell / ${n};
+                int cy = cell % ${n};
+                U h = dil[i];
+                U valid = map[get_map_idx(b, cell, 2)];
+                if (valid > 0.5) {
+                    if (!cell_inside(cx + 1, cy) || !cell_inside(cx, cy + 1)) { return; }
+                    float dzdx = (dil[base + cell + ${n}] - h);
+                    float dzdy = (dil[base + cell + 1] - h);
+                    float nx = -dzdy / ${res};
+                    float ny = -dzdx / ${res};
+                    float norm = sqrt((nx * nx) + (ny * ny) + 1);
+                    newmap[(b * 3 + 0) * ${n} * ${n} + cell] = nx / norm;
+                    newmap[(b * 3 + 1) * ${n} * ${n} + cell] = ny / norm;
+                    newmap[(b * 3 + 2) * ${n} * ${n} + cell] = 1.0 / norm;
+                }
+                """
+            ).substitute(n=n, res=p.resolution),
+            name="normal_filter_kernel_batched",
+        )
+
+    # -- 인터페이스 (ElevationMapBackend 와 동일) --------------------------------
+
+    def clear(self, env_ids) -> None:
+        # stock ElevationMap.clear 와 동일: 전체 0 + variance 만 초기값 (layer3 도 0)
+        ids = torch.as_tensor(list(env_ids), dtype=torch.long)
+        m = torch.as_tensor(self.maps, device=self.device)
+        m[ids] = 0.0
+        m[ids, 1] = self.initial_variance
+
+    @torch.no_grad()
+    def _move_to(self, position: torch.Tensor) -> None:
+        """stock move_to 의 배치판: 셀 스냅 roll(-delta_pixel) + z 시프트."""
+        n = self.cell_n
+        delta = position - self.centers
+        delta_pixel = torch.round(delta[:, :2] / self.resolution)
+        self.centers[:, :2] += delta_pixel * self.resolution
+        self.centers[:, 2] += delta[:, 2]
+        shift = (-delta_pixel).long()  # cp.roll(map, shift, axis=(1,2)) 와 동일 규약
+
+        m = torch.as_tensor(self.maps, device=self.device)  # (B,7,n,n) zero-copy
+        sx, sy = shift[:, 0], shift[:, 1]
+        ar = torch.arange(n, device=self.device)
+        # roll: new[i] = old[(i - s) mod n]
+        ix = (ar.view(1, n) - sx.view(-1, 1)) % n            # (B,n)
+        iy = (ar.view(1, n) - sy.view(-1, 1)) % n
+        rolled = m.gather(2, ix.view(-1, 1, n, 1).expand(-1, 7, n, n))
+        rolled = rolled.gather(3, iy.view(-1, 1, 1, n).expand(-1, 7, n, n))
+        # pad_value: wrap 된 밴드 무효화 (전 레이어 0, variance 는 initial)
+        vx = (ar.view(1, n) >= sx.clamp_min(0).view(-1, 1)) & (
+            ar.view(1, n) < (n + sy.new_zeros(1) + sx.clamp_max(0).view(-1, 1)))
+        vy = (ar.view(1, n) >= sy.clamp_min(0).view(-1, 1)) & (
+            ar.view(1, n) < (n + sx.new_zeros(1) + sy.clamp_max(0).view(-1, 1)))
+        keep = (vx.view(-1, 1, n, 1) & vy.view(-1, 1, 1, n))  # (B,1,n,n)
+        rolled = torch.where(keep, rolled, torch.zeros_like(rolled))
+        pad_var = (~keep).squeeze(1)
+        rolled[:, 1][pad_var] = self.initial_variance
+        # z 시프트: shift_map_z(-delta_z) == elevation/ub 에 -delta_z 를 더한다
+        rolled[:, 0] -= delta[:, 2].view(-1, 1, 1)
+        rolled[:, 5] -= delta[:, 2].view(-1, 1, 1)
+        m.copy_(rolled)
+
+    @torch.no_grad()
+    def update(
+        self,
+        points_sensor: list[torch.Tensor],
+        R_sensor: torch.Tensor,
+        t_sensor: torch.Tensor,
+        base_pos: torch.Tensor,
+        R_base: torch.Tensor,
+    ) -> None:
+        cp = self.cp
+        n, B = self.cell_n, self.num_envs
+        self._move_to(base_pos)
+
+        counts = [int(p.shape[0]) for p in points_sensor]
+        n_tot = sum(counts)
+        self.newmap *= 0.0
+        if n_tot > 0:
+            # add_points 커널이 p 를 in-place 로 덮어쓰므로 스테이징 복사본을 만든다
+            pts = torch.cat([p for p in points_sensor if p.shape[0] > 0], dim=0).contiguous().clone()
+            env_id = torch.repeat_interleave(
+                torch.arange(B, device=self.device, dtype=torch.int32),
+                torch.tensor(counts, device=self.device),
+            ).contiguous()
+            # stock 과 동일: t 는 map center 를 사전 차감, center 인자는 0
+            t_k = (t_sensor - self.centers).contiguous()
+            p_cp = cp.asarray(pts)
+            id_cp = cp.asarray(env_id)
+            R_cp = cp.asarray(R_sensor.contiguous().view(-1))
+            t_cp = cp.asarray(t_k.view(-1))
+            self._err *= 0.0
+            self._err_cnt *= 0.0
+            self._error_counting(
+                self.maps, p_cp, self._zeros_b, self._zeros_b, R_cp, t_cp, id_cp,
+                self.newmap, self._err, self._err_cnt, size=n_tot,
+            )
+            self._add_points(
+                self._zeros_b, self._zeros_b, R_cp, t_cp, self.norm, id_cp,
+                p_cp, self.maps, self.newmap, size=n_tot,
+            )
+        self._average_map(self.newmap, self.maps, size=B * n * n)
+
+        # stock traversability 스텁의 부작용 재현: layer3 내부 = 0
+        m = torch.as_tensor(self.maps, device=self.device)
+        m[:, 3, 3:-3, 3:-3] = 0.0
+
+        # dilation(upper_bound 기반) → normal (visibility cleanup 의 cos 판정용)
+        ub = cp.ascontiguousarray(self.maps[:, 5])
+        mask = cp.ascontiguousarray(self.maps[:, 2] + self.maps[:, 6])
+        self.dil *= 0.0
+        self.dil_mask *= 0.0
+        self._dilation(ub, mask, self.dil, self.dil_mask, size=B * n * n)
+        self.norm *= 0.0
+        self._normal(self.dil, self.maps, self.norm, size=B * n * n)
+
+        # update_variance / update_time
+        m[:, 1] += self.time_variance * m[:, 2]
+        m[:, 4] += self.time_interval
+
+    def layers(self) -> torch.Tensor:
+        return torch.as_tensor(self.maps, device=self.device)
+
+    def centers_t(self) -> torch.Tensor:
+        return self.centers
+
+    def sample(self, points_xy: torch.Tensor, base_z: torch.Tensor):
+        return sample_scan_heights(
+            self.layers(), self.centers, points_xy, base_z, self.resolution, self.cell_n
+        )

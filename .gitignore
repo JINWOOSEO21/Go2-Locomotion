@@ -13,7 +13,7 @@ dist/
 # 학습/재생 산출물.
 # 체크포인트(model_*.pt, 45MB), 텐서보드 이벤트, 녹화 영상, exported jit/onnx 가
 # 전부 여기 쌓인다. 저장소에 넣을 물건이 아니다.
-logs/
+logs
 outputs/
 
 # IsaacLab / Omniverse 캐시
