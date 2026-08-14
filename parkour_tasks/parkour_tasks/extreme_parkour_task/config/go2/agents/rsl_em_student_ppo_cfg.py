@@ -16,15 +16,15 @@ class UnitreeGo2ParkourEMStudentPPORunnerCfg(UnitreeGo2ParkourStudentPPORunnerCf
     - depth_encoder(ConvNet+GRU) 제거 → em_distillation 로 교체
     - algorithm class 는 EMDistillation (depth_actor 만 학습; scan_encoder 는
       teacher deepcopy 로 초기화된 채 함께 fine-tune — Q6)
-    - 산출물/로드 경로는 depth student 와 분리 (student_em_pretrained)
+    - 산출물/로드 경로는 depth student 와 같은 student_pretrained 규약을 그대로
+      상속한다 (load_run / run_subdir 상속). 최상위에 승격된 checkpoint 가 없으면
+      train/play 가 최근 하위 run 폴더로 내려가 찾는다 (checkpoint_utils 참고).
     """
     depth_encoder = None
     em_distillation = ParkourRslRlEMDistillationCfg(
         learning_rate=1.e-3,
         num_steps_per_env=24 * 5,
     )
-    load_run = "student_em_pretrained"
-    run_subdir = "student_em_pretrained"
     # distillation 출발점(teacher). depth student cfg 는 model_14999.pt 를 가리키지만
     # 현재 teacher_pretrained/ 에는 resume 재학습 산출물인 model_16999.pt 만 있다
     # — 존재하는 파일로 못박는다.

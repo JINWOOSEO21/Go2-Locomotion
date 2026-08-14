@@ -85,7 +85,8 @@ python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go
 ```
 - 확인: depth_actor_loss 가 depth student 초기 학습과 유사한 스케일에서 하강하는지,
   play 에서 계단/램프 접근 시 정지·회피가 아닌 등반 시도가 나오는지.
-- 체크포인트는 `logs/rsl_rl/unitree_go2_parkour/student_em_pretrained/<timestamp>/`.
+- 체크포인트는 `logs/rsl_rl/unitree_go2_parkour/student_pretrained/<timestamp>/`
+  (depth student 와 같은 폴더 규약을 공유한다).
 
 ## 7. Phase 5 — 본학습 + 평가
 
@@ -96,8 +97,9 @@ python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-EM-Student-Unit
 ```
 - 최종 지표: 기존 depth student 대비 장애물 8종 성공률 (RMSE/invalid 는 여기서는
   사용하지 않는다 — Q7 합의대로 사전 sanity 게이트 전용).
-- 평가 전에 학습 산출물 중 1개를 `student_em_pretrained/model_*.pt` 최상위로 승격
-  (depth student 의 weight_candidates 규약과 동일).
+- 평가 전에 학습 산출물 중 1개를 `student_pretrained/model_*.pt` 최상위로 승격
+  (depth student 의 weight_candidates 규약과 동일). 승격 전이라도 train --resume /
+  play 는 최상위에 checkpoint 가 없으면 최근 하위 run 폴더로 내려가 찾는다.
 
 ## 알려진 제약 / 주의
 

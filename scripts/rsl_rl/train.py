@@ -88,9 +88,9 @@ from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_yaml
 from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
 from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
+from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
 # import isaaclab_tasks  # noqa: F401
 import parkour_tasks  # noqa: F401
-from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 from parkour_isaaclab.envs import (
 ParkourManagerBasedRLEnv
@@ -183,7 +183,10 @@ def main(env_cfg: ParkourManagerBasedRLEnv |ManagerBasedRLEnvCfg | DirectRLEnvCf
             if args_cli.checkpoint is None and agent_cfg.distill_load_checkpoint:
                 load_checkpoint = agent_cfg.distill_load_checkpoint
             print(f"[INFO] Distillation source (teacher): run='{load_run}', checkpoint='{load_checkpoint}'")
-        resume_path = get_checkpoint_path(log_root_path, load_run, load_checkpoint)
+        # student_pretrained/ 바로 아래의 승격된 checkpoint 를 우선하고, 없으면
+        # (승격 전이라면) 최근 하위 run 폴더에서 찾는다. teacher 출발점처럼 최상위에
+        # checkpoint 가 있는 경우는 기존 get_checkpoint_path 와 동작이 같다.
+        resume_path = get_checkpoint_path_with_fallback(log_root_path, load_run, load_checkpoint)
 
     # # wrap for video recording
     if args_cli.video:

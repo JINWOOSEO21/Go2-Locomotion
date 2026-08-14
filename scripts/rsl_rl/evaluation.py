@@ -62,9 +62,10 @@ from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_che
 from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
 
 from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
+from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
 
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
+from isaaclab_tasks.utils import parse_env_cfg
 
 
 
@@ -94,7 +95,8 @@ def main():
     elif args_cli.checkpoint:
         resume_path = retrieve_file_path(args_cli.checkpoint)
     else:
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        # student_pretrained/ 바로 아래의 승격된 checkpoint 우선, 없으면 최근 하위 run.
+        resume_path = get_checkpoint_path_with_fallback(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
     log_dir = os.path.dirname(resume_path)
 

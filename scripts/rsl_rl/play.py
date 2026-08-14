@@ -8,7 +8,8 @@
 녹화 방식이 두 가지다. teacher / student 어느 태스크든 똑같이 쓸 수 있다.
 
   --video     뷰포트 카메라 1대를 gym.wrappers.RecordVideo 로 녹화한다.
-              결과는 <체크포인트 폴더>/videos/play/ 아래 mp4 1개다.
+              결과는 <load_run 폴더(예: student_pretrained)>/videos/play/ 아래 mp4 1개다.
+              (load_run 폴더가 없으면 체크포인트 옆 videos/play/ 에 둔다.)
 
   --multicam  씬의 record_camera(TiledCamera, env 당 1대)를 직접 읽어
               env 마다 mp4 를 하나씩 쓴다. env 와 지형의 대응이
@@ -91,7 +92,7 @@ parser.add_argument(
     "--out_dir",
     type=str,
     default=None,
-    help="--multicam only. Directory to write the per-env mp4 files into (default: <checkpoint>/videos/multicam).",
+    help="--multicam only. Directory to write the per-env mp4 files into (default: <load_run dir>/videos/multicam).",
 )
 parser.add_argument("--fps", type=int, default=50, help="--multicam only. Output video fps (sim is 1/step_dt = 50).")
 parser.add_argument(
@@ -215,9 +216,10 @@ export_deploy_policy_as_jit,
 export_deploy_policy_as_onnx,
 )
 from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
+from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
 
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
+from isaaclab_tasks.utils import parse_env_cfg
 
 
 
@@ -359,9 +361,16 @@ def main():
     elif args_cli.checkpoint:
         resume_path = retrieve_file_path(args_cli.checkpoint)
     else:
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        # student_pretrained/ 바로 아래의 승격된 checkpoint 를 우선하고, 없으면
+        # (승격 전이라면) 최근 하위 run 폴더에서 찾는다.
+        resume_path = get_checkpoint_path_with_fallback(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
-    log_dir = os.path.dirname(resume_path)
+    # 녹화물(videos/)은 checkpoint 가 하위 run 폴더에서 나왔더라도 load_run 폴더
+    # (student_pretrained/ 또는 teacher_pretrained/) 아래에 모은다. --checkpoint 로
+    # 임의 경로를 줬거나 load_run 폴더가 없으면 기존대로 checkpoint 옆에 둔다.
+    log_dir = os.path.join(log_root_path, str(agent_cfg.load_run))
+    if not os.path.isdir(log_dir):
+        log_dir = os.path.dirname(resume_path)
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
@@ -477,7 +486,8 @@ def main():
     # --multicam 녹화기. 지형 이름은 리셋 후에야 확정되므로 첫 관측 뒤에 만든다.
     recorder = None
     if args_cli.multicam:
-        out_dir = args_cli.out_dir or os.path.join(os.path.dirname(resume_path), "videos", "multicam")
+        # --video 와 같은 규칙: load_run 폴더(student_pretrained/) 아래 videos/ 에 모은다.
+        out_dir = args_cli.out_dir or os.path.join(log_dir, "videos", "multicam")
         recorder = PerEnvVideoRecorder(env, out_dir, fps=args_cli.fps)
         if record_scandots:
             grid = recorder.scandots_grid

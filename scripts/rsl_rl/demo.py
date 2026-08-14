@@ -162,7 +162,7 @@ from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 from isaaclab.utils.math import quat_apply, quat_from_euler_xyz, wrap_to_pi
 from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, retrieve_file_path
-from isaaclab_tasks.utils import get_checkpoint_path
+from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
 from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
 from scripts.rsl_rl.keyboard_teleop import KeyboardTeleop, KeyboardTeleopState
 from scripts.rsl_rl.mjpeg_server import MjpegStreamer
@@ -232,7 +232,8 @@ class ParkourDemoGO2:
         elif args_cli.checkpoint:
             checkpoint = retrieve_file_path(args_cli.checkpoint)
         else:
-            checkpoint = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+            # student_pretrained/ 바로 아래의 승격된 checkpoint 우선, 없으면 최근 하위 run.
+            checkpoint = get_checkpoint_path_with_fallback(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
         self.agent_cfg = agent_cfg 
         # create envionrment
