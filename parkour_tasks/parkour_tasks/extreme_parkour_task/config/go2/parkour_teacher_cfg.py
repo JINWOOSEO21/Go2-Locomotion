@@ -120,7 +120,11 @@ class UnitreeGo2TeacherParkourEnvCfg_PLAY(UnitreeGo2TeacherParkourEnvCfg_EVAL):
         self.parkours.base_parkour.debug_vis = True
         self.commands.base_velocity.debug_vis = True
         if self.scene.terrain.terrain_generator is not None:
-            self.scene.terrain.terrain_generator.difficulty_range = (0.7,1.0)
+            # 상하한을 같게 두면 random_difficulty 의 샘플링과 무관하게 정확히 이 값이 된다
+            # (difficulty = lower + (upper-lower)*t). row 도 1개로 줄여 모든 env 가
+            # 같은 난이도의 같은 행에 선다.
+            self.scene.terrain.terrain_generator.difficulty_range = (0.7, 0.7)
+            self.scene.terrain.terrain_generator.num_rows = 1
         self.events.push_by_setting_velocity = None
         # 학습에 실제로 쓰는 3종(사다리꼴 램프/계단 + flat)만 균등하게 본다.
         # one_col_per_terrain=True 가 num_cols 를 활성 지형 수(=3)에 맞춰

@@ -141,7 +141,7 @@ class UnitreeGo2StudentParkourEnvCfg_PLAY(UnitreeGo2StudentParkourEnvCfg_EVAL):
             if _d is not None:
                 self.scene.terrain.terrain_generator.difficulty_range = (float(_d), float(_d))
             else:
-                self.scene.terrain.terrain_generator.difficulty_range = (0.7,1.0)
+                self.scene.terrain.terrain_generator.difficulty_range = (0.7, 0.7)
             # 기본 16m 지형은 원본 설정에서도 넘칠 수 있다.
             #   필요 길이 = platform_len(2.5) + (num_goals-1=7) * 최대간격
             #   gap    difficulty 1.0 -> 최대간격 1.5+0.8 = 2.3 -> 18.6m
@@ -151,10 +151,9 @@ class UnitreeGo2StudentParkourEnvCfg_PLAY(UnitreeGo2StudentParkourEnvCfg_EVAL):
             # 24m 면 5종 지형 모두 잘림 없이 들어간다. generator.size 는
             # super().__init__ 에서 sub_cfg.size 로 전파된다.
             self.scene.terrain.terrain_generator.size = (24.0, 4.0)
-            # num_rows 는 부모(EVAL)의 5 를 그대로 쓴다 = 커리큘럼 5단계.
-            # VRAM 이 부족할 때는 여기서 줄일 수 있다. difficulty_range 를 (d, d) 로
-            # 고정한 경우에는 모든 행이 같은 난이도라 로봇이 겪는 코스가 달라지지 않는다.
-            # 다만 난이도를 범위로 쓸 때는 커리큘럼 단계 수가 줄어드니 주의.
+            # 난이도가 (d, d) 로 고정이므로 행을 여러 개 둘 이유가 없다.
+            # row 1개 = 모든 env 가 같은 난이도의 같은 행에 선다.
+            self.scene.terrain.terrain_generator.num_rows = 1
         self.events.push_by_setting_velocity = None
         # 학습 지형(사다리꼴 2종)만 균등. flat 은 학습 보조라 뺀다.
         # one_col_per_terrain=True 가 num_cols 를 활성 지형 수(=2)에 자동으로 맞춘다
