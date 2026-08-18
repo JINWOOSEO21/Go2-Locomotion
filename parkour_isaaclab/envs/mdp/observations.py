@@ -170,10 +170,13 @@ class elevation_map_scan(ManagerTermBase):
         self.range_std = float(cfg.params.get("range_std", 0.02))
         self.ray_dir_std_rad = float(np.deg2rad(cfg.params.get("ray_dir_std_deg", 0.2)))
         # odometry 위치(xyz): 변화량 기반 drift 모델. tick 마다
-        #   Δ_meas = Δ_true·(1+b) + n,  b~N(0, odom_scale_var), n~N(0, walk_std²)
-        # 이므로 오차 증분 = Δ_true·b + n 이 누적되어 시간에 따라 커진다.
+        #   Δ_meas = Δ_true·(1+b+bias) + n,  b~N(0, odom_scale_var), n~N(0, walk_std²)
+        # b 는 tick 마다 재샘플되는 백색 계수(√거리 random walk), bias 는 episode 당
+        # 1회 uniform[-max, max] 로 뽑혀 유지되는 계통적 scale 오차(캘리브레이션류,
+        # 이동거리에 선형으로 누적) — yaw 의 gyro bias 와 대칭 구조다.
         self.odom_scale_std = float(cfg.params.get("odom_scale_var", 0.02)) ** 0.5
         self.odom_pos_walk_std = float(cfg.params.get("odom_pos_walk_std", 0.005))
+        self.odom_scale_bias_max = float(cfg.params.get("odom_scale_bias_max", 0.03))
         # yaw: gyro bias drift 모델 — Δ_meas = Δ_true + bias·dt + n.
         # bias 는 reset 마다 [범위] deg/s 크기·랜덤 부호로 재샘플되는 상수,
         # n~N(0, walk_std²). 오차가 시간에 선형(bias) + √t(walk) 로 커진다.
@@ -231,9 +234,11 @@ class elevation_map_scan(ManagerTermBase):
         self._odom_pos_err = torch.zeros(self.num_envs, 3, device=self.device)
         self._odom_yaw_err = torch.zeros(self.num_envs, device=self.device)
         self._odom_yaw_bias = torch.zeros(self.num_envs, device=self.device)
+        self._odom_pos_scale_bias = torch.zeros(self.num_envs, 3, device=self.device)
         self._prev_base_pos = torch.zeros(self.num_envs, 3, device=self.device)
         self._odom_needs_init = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
         self._resample_yaw_bias(torch.arange(self.num_envs, device=self.device))
+        self._resample_pos_scale_bias(torch.arange(self.num_envs, device=self.device))
         # 검증 스크립트(scripts/emcupy_check)가 valid_frac 등에 접근할 수 있게 노출
         env.em_scan_term = self
 
@@ -248,6 +253,7 @@ class elevation_map_scan(ManagerTermBase):
         self._odom_pos_err[env_ids] = 0.0
         self._odom_yaw_err[env_ids] = 0.0
         self._resample_yaw_bias(env_ids)
+        self._resample_pos_scale_bias(env_ids)
         # teleport 직후 pose 로 prev 를 다시 잡아야 하므로 다음 tick 에서 재초기화
         self._odom_needs_init[env_ids] = True
 
@@ -263,6 +269,14 @@ class elevation_map_scan(ManagerTermBase):
             torch.tensor(1.0, device=self.device),
         )
         self._odom_yaw_bias[env_ids] = mag * sign
+
+    def _resample_pos_scale_bias(self, env_ids) -> None:
+        # 위치 scale 계통 오차: episode 당 1회, 축별 독립 uniform[-max, max].
+        # yaw bias 와 달리 0 근처도 뽑힌다 — "거의 정확한 odometry" 도 DR 분포에 포함.
+        n = len(env_ids)
+        self._odom_pos_scale_bias[env_ids] = (
+            torch.rand(n, 3, device=self.device) * 2.0 - 1.0
+        ) * self.odom_scale_bias_max
 
     def __call__(
         self,
@@ -280,6 +294,7 @@ class elevation_map_scan(ManagerTermBase):
         ray_dir_std_deg: float = 0.2,
         odom_scale_var: float = 0.02,
         odom_pos_walk_std: float = 0.005,
+        odom_scale_bias_max: float = 0.03,
         odom_yaw_bias_range_dps: tuple = (0.003, 0.008),
         odom_yaw_walk_std_deg: float = 0.003,
         odom_rp_std_deg: float = 0.5,
@@ -346,7 +361,8 @@ class elevation_map_scan(ManagerTermBase):
         points_sensor = dirs_sensor * t_hit.unsqueeze(-1)
 
         # odometry drift — EM 이 아는 "odom frame 상의 pose" 에만 건다.
-        # 위치: Δ_meas = Δ_true·(1+b) + n → 오차 증분 Δ_true·b + n 누적.
+        # 위치: Δ_meas = Δ_true·(1+b+bias) + n → 오차 증분 Δ_true·(b+bias) + n 누적
+        #      (b 는 tick 백색, bias 는 reset 마다 재샘플되는 episode 상수 scale 오차).
         # yaw: Δ_meas = Δ_true + bias·dt + n → 오차 증분 bias·dt + n 누적
         #      (bias 는 reset 마다 재샘플되는 gyro 상수 bias).
         base_pos = self.asset.data.root_pos_w
@@ -358,10 +374,10 @@ class elevation_map_scan(ManagerTermBase):
             self._odom_needs_init[:] = False
         d_pos_true = base_pos - self._prev_base_pos
         self._prev_base_pos = base_pos.clone()
-        if self.odom_scale_std > 0 or self.odom_pos_walk_std > 0:
+        if self.odom_scale_std > 0 or self.odom_pos_walk_std > 0 or self.odom_scale_bias_max > 0:
             b_pos = torch.randn(self.num_envs, 3, device=self.device) * self.odom_scale_std
             n_pos = torch.randn(self.num_envs, 3, device=self.device) * self.odom_pos_walk_std
-            self._odom_pos_err += d_pos_true * b_pos + n_pos
+            self._odom_pos_err += d_pos_true * (b_pos + self._odom_pos_scale_bias) + n_pos
         n_yaw = torch.randn(self.num_envs, device=self.device) * self.odom_yaw_walk_std_rad
         self._odom_yaw_err += self._odom_yaw_bias + n_yaw
 
