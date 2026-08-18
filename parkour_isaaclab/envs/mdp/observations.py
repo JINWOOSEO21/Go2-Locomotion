@@ -182,7 +182,7 @@ class elevation_map_scan(ManagerTermBase):
         # yaw: gyro bias drift 모델 — Δ_meas = Δ_true + bias·dt + n.
         # bias 는 reset 마다 [범위] deg/s 크기·랜덤 부호로 재샘플되는 상수,
         # n~N(0, walk_std²). 오차가 시간에 선형(bias) + √t(walk) 로 커진다.
-        self.odom_yaw_bias_range_dps = tuple(cfg.params.get("odom_yaw_bias_range_dps", (0.003, 0.008)))
+        self.odom_yaw_bias_range_dps = tuple(cfg.params.get("odom_yaw_bias_range_dps", (0.01, 0.05)))
         self.odom_yaw_walk_std_rad = float(np.deg2rad(cfg.params.get("odom_yaw_walk_std_deg", 0.003)))
         # roll/pitch 는 중력(IMU) 관측으로 드리프트하지 않으므로 백색잡음만.
         self.odom_rp_std_rad = float(np.deg2rad(cfg.params.get("odom_rp_std_deg", 0.5)))
@@ -297,7 +297,7 @@ class elevation_map_scan(ManagerTermBase):
         odom_scale_var: float = 0.02,
         odom_pos_walk_std: float = 0.005,
         odom_scale_bias_max: float = 0.03,
-        odom_yaw_bias_range_dps: tuple = (0.003, 0.008),
+        odom_yaw_bias_range_dps: tuple = (0.01, 0.05),
         odom_yaw_walk_std_deg: float = 0.003,
         odom_rp_std_deg: float = 0.5,
     ) -> torch.Tensor:

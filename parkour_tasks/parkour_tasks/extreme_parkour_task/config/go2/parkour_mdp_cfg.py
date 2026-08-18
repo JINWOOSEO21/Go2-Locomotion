@@ -131,7 +131,7 @@ class EMStudentObservationsCfg:
             "odom_pos_walk_std": 0.005,    # n ~ N(0, 0.005²) [m/tick] 위치 random walk
             "odom_scale_bias_max": 0.03,   # bias ~ U(-0.03, 0.03) — episode 당 1회, 축별 독립
             # yaw drift: Δ_meas = Δ_true + bias·dt + n (bias 는 reset 마다 재샘플)
-            "odom_yaw_bias_range_dps": (0.003, 0.008),  # gyro bias 크기 [deg/s], 부호 랜덤
+            "odom_yaw_bias_range_dps": (0.01, 0.05),  # gyro bias 크기 [deg/s], 부호 랜덤
             "odom_yaw_walk_std_deg": 0.003,  # yaw random walk σ [deg/tick]
             "odom_rp_std_deg": 0.5,    # roll/pitch 백색잡음 σ [deg] (IMU 관측, 비누적)
             },
