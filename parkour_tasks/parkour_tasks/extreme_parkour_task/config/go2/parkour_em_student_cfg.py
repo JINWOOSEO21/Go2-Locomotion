@@ -72,7 +72,12 @@ class UnitreeGo2EMStudentParkourEnvCfg_EVAL(UnitreeGo2EMStudentParkourEnvCfg):
 
 @configclass
 class UnitreeGo2EMStudentParkourEnvCfg_PLAY(UnitreeGo2EMStudentParkourEnvCfg_EVAL):
-    """depth student 의 PLAY 와 동일한 지형/난이도 설정 (parkour_student_cfg 참조)."""
+    """depth student 의 PLAY 기반 지형 설정 (parkour_student_cfg 참조).
+
+    난이도는 여기서만 다르다 — 기본을 (0.7, 0.7) 고정 + num_rows=1 로 두어
+    모든 env 가 같은 난이도(단차 17.6cm)를 밟는다. PARKOUR_DIFFICULTY 환경변수로
+    다른 값을 고정할 수 있다.
+    """
 
     def __post_init__(self):
         super().__post_init__()
@@ -84,7 +89,9 @@ class UnitreeGo2EMStudentParkourEnvCfg_PLAY(UnitreeGo2EMStudentParkourEnvCfg_EVA
             if _d is not None:
                 self.scene.terrain.terrain_generator.difficulty_range = (float(_d), float(_d))
             else:
-                self.scene.terrain.terrain_generator.difficulty_range = (0.7, 1.0)
+                # 고정 난이도 0.7 — row 가 1개뿐이라 모든 env 가 같은 난이도다.
+                self.scene.terrain.terrain_generator.difficulty_range = (0.7, 0.7)
+            self.scene.terrain.terrain_generator.num_rows = 1
             self.scene.terrain.terrain_generator.size = (24.0, 4.0)
         self.events.push_by_setting_velocity = None
         apply_terrain_preset(
