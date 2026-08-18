@@ -129,6 +129,15 @@ parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
+parser.add_argument(
+    "--seed",
+    type=int,
+    default=None,
+    help=(
+        "Seed for the environment (terrain noise, reset noise, DR). Same behaviour as train.py: "
+        "omit for non-deterministic play, -1 samples a random seed."
+    ),
+)
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
     "--use_pretrained_checkpoint",
@@ -348,6 +357,14 @@ def main():
     apply_terrain_override(env_cfg)
     apply_depth_camera(env_cfg)
     agent_cfg: ParkourRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
+
+    # --seed 가 주어졌을 때만 env 에 심는다 (train.py:127 과 같은 경로). env 초기화가
+    # torch/numpy 전역 시드를 잡아 지형 노이즈·리셋 노이즈·DR 이 재현된다.
+    # 플래그가 없으면 기존처럼 seed=None(비결정적)을 유지한다. -1 은 cli_args 가
+    # 이미 랜덤 시드로 바꿔 agent_cfg.seed 에 넣어 둔다.
+    if args_cli.seed is not None:
+        env_cfg.seed = agent_cfg.seed
+        print(f"[INFO] --seed {args_cli.seed}: environment seed 를 {agent_cfg.seed} 로 설정한다.")
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
