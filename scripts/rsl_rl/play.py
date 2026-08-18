@@ -43,8 +43,9 @@
                 합산해 env 별로 쌓고, 끝나면 env(지형)마다 선 그래프 PNG 1개와
                 전체 CSV 1개를 남긴다 (--multicam 이면 영상과 같은 폴더, 아니면
                 <load_run 폴더>/videos/em_error/). x 축 frame 은 multicam 영상과
-                1:1 이다. episode 가 중간에 끝나도 그래프는 자르지 않고
-                video_length 까지 채우며, 종료 프레임만 빨간 세로 점선으로 표시한다.
+                1:1 이다. env 마다 첫 episode 가 끝나면 그 env 의 기록을 멈추므로
+                그래프 하나에는 episode 하나의 데이터만 들어간다. 종료 프레임은
+                빨간 세로 점선으로 표시한다.
 
   --preset      PLAY cfg 의 지형 분포를 TERRAIN_PRESETS 의 다른 키로 바꾼다.
                 one_col_per_terrain 로 붙이므로 --num_envs 를 프리셋의 지형 수와
@@ -186,9 +187,9 @@ parser.add_argument(
     default=False,
     help=(
         "EM student only. Every frame, sum |elevation-map sample - GT scandots| over the whole "
-        "scan grid per env, then save one line-plot PNG per env (terrain) plus a CSV, covering "
-        "exactly video_length frames. Episode terminations are marked with vertical lines but "
-        "never cut the plot short."
+        "scan grid per env, then save one line-plot PNG per env (terrain) plus a CSV. Each env "
+        "stops recording once its first episode ends, so every plot holds exactly one episode "
+        "(the termination frame is marked with a vertical line)."
     ),
 )
 parser.add_argument(
@@ -369,9 +370,9 @@ def save_em_error_plots(err_hist, done_marks, terrain_names, out_dir):
     """--em_error_plot 산출물 저장: env(지형)마다 PNG 1개 + 전체 CSV 1개.
 
     err_hist 는 프레임마다 (num_envs,) 크기의 '스캔 전 구간 |EM − GT| 합' 배열이고,
-    done_marks[i] 는 env i 의 episode 가 끝난 프레임 인덱스들이다. termination 이
-    있어도 그래프는 자르지 않고 video_length 전체를 그리며, 종료 지점만 세로
-    점선으로 표시한다 (리셋 직후 프레임부터 새 episode 다).
+    done_marks[i] 는 env i 의 첫 episode 가 끝난 프레임 인덱스다(최대 1개).
+    첫 episode 가 끝난 뒤의 값은 NaN 으로 채워져 있으므로 그래프는 유효 구간만
+    그린다 — 그래프 하나 = episode 하나. CSV 에서도 종료 이후는 nan 이다.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -386,12 +387,15 @@ def save_em_error_plots(err_hist, done_marks, terrain_names, out_dir):
 
     for i, name in enumerate(terrain_names):
         fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(np.arange(errs.shape[0]), errs[:, i], lw=0.8)
+        valid = ~np.isnan(errs[:, i])
+        last = int(np.nonzero(valid)[0][-1]) if valid.any() else 0
+        ax.plot(np.arange(last + 1), errs[: last + 1, i], lw=0.8)
         for j, step in enumerate(done_marks[i]):
             ax.axvline(step, color="red", ls="--", lw=0.8, alpha=0.7,
                        label="episode end" if j == 0 else None)
         ax.set_xlabel("frame")
-        ax.set_ylabel("sum |EM - GT| over scandots (obs units)")
+        # 스캔 관측은 clip(base_z − h − 0.3, ±1) [m] 이므로 합의 단위도 m 다.
+        ax.set_ylabel("sum |EM - GT| over scandots [m]")
         ax.set_title(f"env{i} {name}: elevation-map error per frame")
         if done_marks[i]:
             ax.legend(loc="upper right")
@@ -585,6 +589,9 @@ def main():
     em_done_marks = [[] for _ in range(env.num_envs)]
     em_terrain_names = resolve_terrain_names(env) if em_plot else None
     em_err_step = None
+    # env 별로 첫 episode 가 끝나면 False — 그 뒤 프레임은 NaN 으로 채워
+    # 그래프 하나에 episode 하나의 데이터만 남긴다.
+    em_alive = np.ones(env.num_envs, dtype=bool)
 
     timestep = 0
     depth_camera = None
@@ -688,11 +695,19 @@ def main():
 
             if args_cli.video or recorder is not None or em_plot:
                 if em_plot and em_err_step is not None:
-                    # episode 가 끝나도(termination) 그래프를 자르지 않고 video_length
-                    # 까지 계속 쌓는다. 종료 프레임만 표시용으로 기억해 둔다.
-                    em_err_hist.append(em_err_step)
+                    # 첫 episode 가 끝난 env 는 기록을 멈춘다(NaN). 종료 프레임 자체는
+                    # 이번 episode 의 마지막 행동에 해당하므로 포함하고, 그 다음부터 끊는다.
+                    step_vals = em_err_step.copy()
+                    step_vals[~em_alive] = np.nan
+                    em_err_hist.append(step_vals)
                     for env_id in (dones.reshape(-1) > 0).nonzero(as_tuple=False)[:, 0].tolist():
-                        em_done_marks[env_id].append(len(em_err_hist) - 1)
+                        if em_alive[env_id]:
+                            em_done_marks[env_id].append(len(em_err_hist) - 1)
+                            em_alive[env_id] = False
+                    # 영상 녹화가 없으면(그래프 전용) 모든 env 가 끝난 시점에 조기 종료.
+                    if recorder is None and not args_cli.video and not em_alive.any():
+                        print("[INFO] --em_error_plot: 모든 env 의 첫 episode 종료, 조기 종료한다.")
+                        break
                 timestep += 1
                 # Exit the play loop after recording one video
                 if timestep >= args_cli.video_length:
