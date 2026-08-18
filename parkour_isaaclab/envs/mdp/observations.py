@@ -169,11 +169,13 @@ class elevation_map_scan(ManagerTermBase):
         # L1 측정: 거리(range) 백색잡음 + 빔 지향(az/el) 백색잡음.
         self.range_std = float(cfg.params.get("range_std", 0.02))
         self.ray_dir_std_rad = float(np.deg2rad(cfg.params.get("ray_dir_std_deg", 0.2)))
-        # odometry 위치(xyz): 변화량 기반 drift 모델. tick 마다
+        # odometry 위치(xyz): 변화량 기반 drift 모델. tick 마다 (body frame 축별로)
         #   Δ_meas = Δ_true·(1+b+bias) + n,  b~N(0, odom_scale_var), n~N(0, walk_std²)
         # b 는 tick 마다 재샘플되는 백색 계수(√거리 random walk), bias 는 episode 당
         # 1회 uniform[-max, max] 로 뽑혀 유지되는 계통적 scale 오차(캘리브레이션류,
         # 이동거리에 선형으로 누적) — yaw 의 gyro bias 와 대칭 구조다.
+        # b·bias 는 body frame 에서 걸린다(보폭/슬립 오차는 로봇 기준). 등방성 n 은
+        # 회전 불변이라 frame 구분이 없다.
         self.odom_scale_std = float(cfg.params.get("odom_scale_var", 0.02)) ** 0.5
         self.odom_pos_walk_std = float(cfg.params.get("odom_pos_walk_std", 0.005))
         self.odom_scale_bias_max = float(cfg.params.get("odom_scale_bias_max", 0.03))
@@ -361,8 +363,9 @@ class elevation_map_scan(ManagerTermBase):
         points_sensor = dirs_sensor * t_hit.unsqueeze(-1)
 
         # odometry drift — EM 이 아는 "odom frame 상의 pose" 에만 건다.
-        # 위치: Δ_meas = Δ_true·(1+b+bias) + n → 오차 증분 Δ_true·(b+bias) + n 누적
-        #      (b 는 tick 백색, bias 는 reset 마다 재샘플되는 episode 상수 scale 오차).
+        # 위치: Δ_meas = Δ_true·(1+b+bias) + n → 오차 증분 R·((Rᵀ·Δ_true)∘(b+bias)) + n
+        #      (b 는 tick 백색, bias 는 reset 마다 재샘플되는 episode 상수 scale 오차,
+        #       둘 다 body frame 축별 적용).
         # yaw: Δ_meas = Δ_true + bias·dt + n → 오차 증분 bias·dt + n 누적
         #      (bias 는 reset 마다 재샘플되는 gyro 상수 bias).
         base_pos = self.asset.data.root_pos_w
@@ -377,7 +380,13 @@ class elevation_map_scan(ManagerTermBase):
         if self.odom_scale_std > 0 or self.odom_pos_walk_std > 0 or self.odom_scale_bias_max > 0:
             b_pos = torch.randn(self.num_envs, 3, device=self.device) * self.odom_scale_std
             n_pos = torch.randn(self.num_envs, 3, device=self.device) * self.odom_pos_walk_std
-            self._odom_pos_err += d_pos_true * (b_pos + self._odom_pos_scale_bias) + n_pos
+            # scale 오차(b, bias)는 body frame 축별로 건다 — 보폭/슬립 오차는 로봇
+            # 기준(진행/횡/수직)으로 생기므로 Δ 를 body 로 돌려 곱하고 world 로
+            # 되돌려 누적한다. 등방성 walk n 은 회전 불변(R·N(0,σ²I)=N(0,σ²I))이라
+            # frame 을 가릴 필요가 없다 — 축별 σ 를 도입하면 그때 body 로 옮길 것.
+            d_pos_body = torch.bmm(R_base.transpose(1, 2), d_pos_true.unsqueeze(-1)).squeeze(-1)
+            err_body = d_pos_body * (b_pos + self._odom_pos_scale_bias)
+            self._odom_pos_err += torch.bmm(R_base, err_body.unsqueeze(-1)).squeeze(-1) + n_pos
         n_yaw = torch.randn(self.num_envs, device=self.device) * self.odom_yaw_walk_std_rad
         self._odom_yaw_err += self._odom_yaw_bias + n_yaw
 
