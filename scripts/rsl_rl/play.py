@@ -40,7 +40,7 @@
 
   --em_error_plot  EM student 전용. 매 프레임 obs 의 GT scandots 와 정책이 실제로
                 먹은 elevation map 샘플의 |차이| 를 스캔 전 구간(num_scan 개)에서
-                합산해 env 별로 쌓고, 끝나면 env(지형)마다 선 그래프 PNG 1개와
+                cell당 평균해[m] env 별로 쌓고, 끝나면 env(지형)마다 선 그래프 PNG 1개와
                 전체 CSV 1개를 남긴다 (--multicam 이면 영상과 같은 폴더, 아니면
                 <load_run 폴더>/videos/em_error/). x 축 frame 은 multicam 영상과
                 1:1 이다. env 마다 첫 episode 가 끝나면 그 env 의 기록을 멈추므로
@@ -186,8 +186,8 @@ parser.add_argument(
     action="store_true",
     default=False,
     help=(
-        "EM student only. Every frame, sum |elevation-map sample - GT scandots| over the whole "
-        "scan grid per env, then save one line-plot PNG per env (terrain) plus a CSV. Each env "
+        "EM student only. Every frame, average |elevation-map sample - GT scandots| per scan "
+        "cell [m] per env, then save one line-plot PNG per env (terrain) plus a CSV. Each env "
         "stops recording once its first episode ends, so every plot holds exactly one episode "
         "(the termination frame is marked with a vertical line)."
     ),
@@ -369,7 +369,8 @@ def apply_depth_camera(env_cfg):
 def save_em_error_plots(err_hist, done_marks, terrain_names, out_dir):
     """--em_error_plot 산출물 저장: env(지형)마다 PNG 1개 + 전체 CSV 1개.
 
-    err_hist 는 프레임마다 (num_envs,) 크기의 '스캔 전 구간 |EM − GT| 합' 배열이고,
+    err_hist 는 프레임마다 (num_envs,) 크기의 '스캔 전 구간 |EM − GT| cell당 평균 [m]'
+    배열이고,
     done_marks[i] 는 env i 의 첫 episode 가 끝난 프레임 인덱스다(최대 1개).
     첫 episode 가 끝난 뒤의 값은 NaN 으로 채워져 있으므로 그래프는 유효 구간만
     그린다 — 그래프 하나 = episode 하나. CSV 에서도 종료 이후는 nan 이다.
@@ -394,8 +395,8 @@ def save_em_error_plots(err_hist, done_marks, terrain_names, out_dir):
             ax.axvline(step, color="red", ls="--", lw=0.8, alpha=0.7,
                        label="episode end" if j == 0 else None)
         ax.set_xlabel("frame")
-        # 스캔 관측은 clip(base_z − h − 0.3, ±1) [m] 이므로 합의 단위도 m 다.
-        ax.set_ylabel("sum |EM - GT| over scandots [m]")
+        # 스캔 관측은 clip(base_z − h − 0.3, ±1) [m] 이므로 평균의 단위도 m 다.
+        ax.set_ylabel("mean |EM - GT| per scandot [m]")
         ax.set_title(f"env{i} {name}: elevation-map error per frame")
         if done_marks[i]:
             ax.legend(loc="upper right")
@@ -628,11 +629,11 @@ def main():
                     actions = policy(obs_em, hist_encoding=True)
                     if em_plot:
                         # 이 프레임의 행동을 만든 입력 기준: 스캔 전 구간(num_scan 개)의
-                        # |elevation map 샘플 − GT scandots| 합, env 별로 하나씩.
+                        # |elevation map 샘플 − GT scandots| 의 cell당 평균, env 별로 하나씩.
                         em_err_step = (
                             (obs_em[:, num_prop:num_prop + num_scan]
                              - obs[:, num_prop:num_prop + num_scan])
-                            .abs().sum(dim=1).cpu().numpy().copy()
+                            .abs().mean(dim=1).cpu().numpy().copy()
                         )
             else:
                 depth_camera = extras["observations"]['depth_camera'].to(env.device)
