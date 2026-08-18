@@ -38,6 +38,14 @@
                 student 에서 켜면 "teacher 라면 봤을 값" 을 보여 주는 셈이다.
                 --with_depth 와 같이 주면 RGB | depth | scandots 로 붙는다.
 
+  --em_error_plot  EM student 전용. 매 프레임 obs 의 GT scandots 와 정책이 실제로
+                먹은 elevation map 샘플의 |차이| 를 스캔 전 구간(num_scan 개)에서
+                합산해 env 별로 쌓고, 끝나면 env(지형)마다 선 그래프 PNG 1개와
+                전체 CSV 1개를 남긴다 (--multicam 이면 영상과 같은 폴더, 아니면
+                <load_run 폴더>/videos/em_error/). x 축 frame 은 multicam 영상과
+                1:1 이다. episode 가 중간에 끝나도 그래프는 자르지 않고
+                video_length 까지 채우며, 종료 프레임만 빨간 세로 점선으로 표시한다.
+
   --preset      PLAY cfg 의 지형 분포를 TERRAIN_PRESETS 의 다른 키로 바꾼다.
                 one_col_per_terrain 로 붙이므로 --num_envs 를 프리셋의 지형 수와
                 같게 주면 지형당 1마리가 된다.
@@ -129,6 +137,15 @@ parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
+parser.add_argument(
+    "--seed",
+    type=int,
+    default=None,
+    help=(
+        "Seed for the environment (terrain noise, reset noise, DR). Same behaviour as train.py: "
+        "omit for non-deterministic play, -1 samples a random seed."
+    ),
+)
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
     "--use_pretrained_checkpoint",
@@ -164,6 +181,17 @@ parser.add_argument(
     ),
 )
 parser.add_argument(
+    "--em_error_plot",
+    action="store_true",
+    default=False,
+    help=(
+        "EM student only. Every frame, sum |elevation-map sample - GT scandots| over the whole "
+        "scan grid per env, then save one line-plot PNG per env (terrain) plus a CSV, covering "
+        "exactly video_length frames. Episode terminations are marked with vertical lines but "
+        "never cut the plot short."
+    ),
+)
+parser.add_argument(
     "--fixed_heading",
     action="store_true",
     default=False,
@@ -192,12 +220,13 @@ simulation_app = app_launcher.app
 import copy
 import gymnasium as gym
 import math
+import numpy as np
 import os
 import time
 import torch
 
 from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
-from scripts.rsl_rl.multicam_recorder import PerEnvVideoRecorder
+from scripts.rsl_rl.multicam_recorder import PerEnvVideoRecorder, resolve_terrain_names
 
 from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
 from isaaclab.utils.assets import retrieve_file_path
@@ -336,6 +365,44 @@ def apply_depth_camera(env_cfg):
     print("[INFO] --with_depth: 씬에 depth 관측이 없어 녹화 전용 depth 카메라를 추가한다 (정책 입력 아님).")
 
 
+def save_em_error_plots(err_hist, done_marks, terrain_names, out_dir):
+    """--em_error_plot 산출물 저장: env(지형)마다 PNG 1개 + 전체 CSV 1개.
+
+    err_hist 는 프레임마다 (num_envs,) 크기의 '스캔 전 구간 |EM − GT| 합' 배열이고,
+    done_marks[i] 는 env i 의 episode 가 끝난 프레임 인덱스들이다. termination 이
+    있어도 그래프는 자르지 않고 video_length 전체를 그리며, 종료 지점만 세로
+    점선으로 표시한다 (리셋 직후 프레임부터 새 episode 다).
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    errs = np.stack(err_hist, axis=0)  # (T, num_envs)
+    os.makedirs(out_dir, exist_ok=True)
+
+    csv_path = os.path.join(out_dir, "em_error.csv")
+    header = ",".join(f"env{i}_{name}" for i, name in enumerate(terrain_names))
+    np.savetxt(csv_path, errs, delimiter=",", header=header, comments="")
+
+    for i, name in enumerate(terrain_names):
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(np.arange(errs.shape[0]), errs[:, i], lw=0.8)
+        for j, step in enumerate(done_marks[i]):
+            ax.axvline(step, color="red", ls="--", lw=0.8, alpha=0.7,
+                       label="episode end" if j == 0 else None)
+        ax.set_xlabel("frame")
+        ax.set_ylabel("sum |EM - GT| over scandots (obs units)")
+        ax.set_title(f"env{i} {name}: elevation-map error per frame")
+        if done_marks[i]:
+            ax.legend(loc="upper right")
+        fig.tight_layout()
+        png_path = os.path.join(out_dir, f"em_error_env{i}_{name}.png")
+        fig.savefig(png_path, dpi=150)
+        plt.close(fig)
+        print(f"[INFO] --em_error_plot: {png_path}")
+    print(f"[INFO] --em_error_plot: {csv_path}")
+
+
 def main():
     """Play with RSL-RL agent."""
     # parse configuration
@@ -348,6 +415,14 @@ def main():
     apply_terrain_override(env_cfg)
     apply_depth_camera(env_cfg)
     agent_cfg: ParkourRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
+
+    # --seed 가 주어졌을 때만 env 에 심는다 (train.py:127 과 같은 경로). env 초기화가
+    # torch/numpy 전역 시드를 잡아 지형 노이즈·리셋 노이즈·DR 이 재현된다.
+    # 플래그가 없으면 기존처럼 seed=None(비결정적)을 유지한다. -1 은 cli_args 가
+    # 이미 랜덤 시드로 바꿔 agent_cfg.seed 에 넣어 둔다.
+    if args_cli.seed is not None:
+        env_cfg.seed = agent_cfg.seed
+        print(f"[INFO] --seed {args_cli.seed}: environment seed 를 {agent_cfg.seed} 로 설정한다.")
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -500,6 +575,17 @@ def main():
                 )
                 record_scandots = False
 
+    # --em_error_plot 준비. 프레임 카운트는 multicam 녹화와 같은 지점에서 하므로
+    # 영상과 그래프의 x 축(frame)이 1:1 로 맞는다.
+    em_plot = bool(args_cli.em_error_plot)
+    if em_plot and not is_em:
+        print("[WARN] --em_error_plot 은 EM student(EMDistillation) 전용이다. 무시한다.")
+        em_plot = False
+    em_err_hist = []
+    em_done_marks = [[] for _ in range(env.num_envs)]
+    em_terrain_names = resolve_terrain_names(env) if em_plot else None
+    em_err_step = None
+
     timestep = 0
     depth_camera = None
     # mp4 는 moov atom 을 close() 시점에 쓴다. 중간에 죽으면 파일이 통째로 재생 불가가
@@ -533,6 +619,14 @@ def main():
                     obs_em[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = \
                         estimator.inference(obs_em[:, :num_prop])
                     actions = policy(obs_em, hist_encoding=True)
+                    if em_plot:
+                        # 이 프레임의 행동을 만든 입력 기준: 스캔 전 구간(num_scan 개)의
+                        # |elevation map 샘플 − GT scandots| 합, env 별로 하나씩.
+                        em_err_step = (
+                            (obs_em[:, num_prop:num_prop + num_scan]
+                             - obs[:, num_prop:num_prop + num_scan])
+                            .abs().sum(dim=1).cpu().numpy().copy()
+                        )
             else:
                 depth_camera = extras["observations"]['depth_camera'].to(env.device)
                 with torch.inference_mode():
@@ -582,7 +676,7 @@ def main():
             # 스텝 중에 렌더가 일어나므로 그 전에 카메라를 현재 로봇 위치로 옮겨둔다.
             if recorder is not None:
                 recorder.track_camera()
-            obs, _, _, extras = env.step(actions)
+            obs, _, dones, extras = env.step(actions)
 
             if recorder is not None:
                 # 정책 호출에 쓴 것과 같은 텐서를 그대로 그린다. 버퍼가 5 스텝마다 갱신되므로
@@ -592,7 +686,13 @@ def main():
                     # 아직 카메라 출력이 안 나왔다. 프레임 수로 세지 않는다.
                     continue
 
-            if args_cli.video or recorder is not None:
+            if args_cli.video or recorder is not None or em_plot:
+                if em_plot and em_err_step is not None:
+                    # episode 가 끝나도(termination) 그래프를 자르지 않고 video_length
+                    # 까지 계속 쌓는다. 종료 프레임만 표시용으로 기억해 둔다.
+                    em_err_hist.append(em_err_step)
+                    for env_id in (dones.reshape(-1) > 0).nonzero(as_tuple=False)[:, 0].tolist():
+                        em_done_marks[env_id].append(len(em_err_hist) - 1)
                 timestep += 1
                 # Exit the play loop after recording one video
                 if timestep >= args_cli.video_length:
@@ -607,6 +707,13 @@ def main():
     finally:
         if recorder is not None:
             recorder.close()
+        # 중간에 죽어도 그때까지 모인 프레임으로 그래프를 남긴다.
+        if em_plot and em_err_hist:
+            em_out_dir = (
+                recorder.out_dir if recorder is not None
+                else os.path.join(log_dir, "videos", "em_error")
+            )
+            save_em_error_plots(em_err_hist, em_done_marks, em_terrain_names, em_out_dir)
 
     # # close the simulator
     env.close()
