@@ -4,6 +4,11 @@
 목표: IsaacLab → MuJoCo sim2sim 으로 도메인 갭을 계량한 뒤 Go2 실기(sim2real)로 간다.
 참조 프레임워크: `unitree_rl_lab` (로컬 클론 `~/workspace/codes/unitree_rl_lab`)
 
+**작업 브랜치: `sim2sim`.** `master`(= tag `trained_v1.3`)는 IsaacSim 학습/재생 전용으로
+그대로 둔다 — MuJoCo 이식물은 이 브랜치에만 쌓는다. master 에 들어간 것은
+`elevation_mapping_cupy` submodule 고정(`76f14d5`) 하나뿐이고, 그건 원래 EM student 의
+play/evaluation 이 돌아가려면 필요한 수정이라 여기 두지 않았다.
+
 ---
 
 ## 0. 요약 — 무엇을 하고 무엇을 하지 않는가
@@ -33,26 +38,36 @@ A 를 먼저 끝내고 B 로 간다. A 없이 B 로 가면 "정책이 못 걷는
 
 > **핵심**: 이식의 무게 중심은 정책(MLP 몇 개)이 아니라 **정책 밖에 사는 지각 파이프라인**(L1 LiDAR → self-filter → elevation map → scandots 132)이다. 정책 자체는 하루면 옮긴다.
 
-### ⚠ 시작 전 선결 과제 — `elevation_mapping_cupy` 클론이 현재 깨져 있다
+### 선결 과제 진행 상황 (2026-09-02 갱신)
 
-작업 시작 시점(2026-09-02) 실측:
+| 항목 | 상태 |
+|---|---|
+| sim2real 전용 conda 환경 | **완료** — `env_sim2real` (Python 3.11.16, mujoco 3.12.0) |
+| `elevation_mapping_cupy` 의존성 고정 | **완료** — submodule @ `20a8a26`, **master 커밋 `76f14d5`** (이 브랜치가 아니라 master 에 있다) |
+| 관절 순서 3종 실측 | **완료** — `deploy/contract/deploy.yaml` |
+| Go2 MJCF 확보 | 완료 — `mujoco_menagerie` @ `e4049d0` (submodule 아님, SHA 만 기록) |
 
+**`elevation_mapping_cupy` 는 원래 깨져 있었다.** 로컬 클론에 `.py` 소스가 하나도 없이
+`__pycache__/*.pyc` 만 남아 있었고 git 에 추적되지도 않아
+`from elevation_mapping_cupy import ElevationMap, Parameter` 가 `ImportError` 를 냈다.
+`BatchedElevationMapBackend.__init__` 이 런타임에 이걸 import 하므로
+(`elevation_map_backend.py:50-69`) EM student 의 play/evaluation 자체가 불가능한 상태였다.
+
+이제 submodule 로 고정했으므로 클론 후에는 다음이 필요하다:
+
+```bash
+git submodule update --init --recursive
 ```
-$ python -c "import sys; sys.path.insert(0,'elevation_mapping_cupy/elevation_mapping_cupy/script'); \
-             from elevation_mapping_cupy import ElevationMap, Parameter"
-ImportError: cannot import name 'ElevationMap' from 'elevation_mapping_cupy' (unknown location)
-```
 
-- `elevation_mapping_cupy/` 아래에 **`.py` 소스가 하나도 없고 `__pycache__/*.pyc` 만 남아 있다** (`find ... -name "*.py" | wc -l` → 0).
-- 이 디렉터리는 **git 에 추적되지 않는다** (`git ls-files elevation_mapping_cupy` → 0개). `.gitignore` 에도 없다 — 그냥 로컬 클론이었고 소스가 지워진 상태다.
-- 결과: **EM student 의 play / evaluation / MuJoCo 이식이 전부 지금은 불가능하다.** `BatchedElevationMapBackend.__init__` 이 런타임에 `from elevation_mapping_cupy import ElevationMap, Parameter` 를 하기 때문이다 (`elevation_map_backend.py:50-69`).
+확인된 맵 사양(실제 `Parameter` 로 재현): `cell_n = int(round(map_length/resolution)) + 2`
+→ 3.2 m / 0.1 m 이면 **34×34 셀**.
 
-**해야 할 일 (Phase 0 이전):**
-1. `elevation_mapping_cupy` 를 ROS1 `main` 브랜치 `20a8a26` (계획서 §1.4 가 못박은 커밋)로 재클론.
-2. 재클론 후 `scripts/emcupy_check/smoke_em_backend.py` 로 동작 확인.
-3. **재발 방지**: git submodule 로 고정하거나, 실제로 쓰는 파일만 `third_party/` 로 vendoring 해서 커밋할 것. 배포 대상 파이프라인의 핵심 의존성이 버전 고정 없이 로컬 클론으로만 존재하면 sim2real 재현이 불가능하다.
-
-참고로 확정된 맵 사양(`Parameter.update` 역어셈블로 확인): `cell_n = int(round(map_length/resolution)) + 2` → 3.2 m / 0.1 m 이면 **34×34 셀**.
+> **메인 체크아웃 주의**: 기존 작업 복사본에는 소스가 사라진 `elevation_mapping_cupy/` 가
+> untracked 로 남아 있다. master(`76f14d5` 이후)를 체크아웃하기 전에 그 디렉터리를 지워야
+> submodule 이 깨끗하게 들어온다:
+> ```bash
+> rm -rf elevation_mapping_cupy && git checkout master && git submodule update --init --recursive
+> ```
 
 ---
 
@@ -248,13 +263,26 @@ MuJoCo 코드를 한 줄도 쓰기 전에 한다. 이게 이후 모든 디버깅
 
 ## 4. 함정 목록 (실패 원인 후보, 체감 위험 순)
 
-1. **관절 순서.** IsaacLab 순서 ≠ MJCF 순서 ≠ Unitree SDK 순서(`FR/FL/RR/RL × hip,thigh,calf`).
-   추측하지 말고 한 번 찍어서 못박을 것:
-   ```bash
-   python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Play-v0 \
-       --num_envs 1 --headless   # 에 robot.data.joint_names 출력 한 줄 추가
-   ```
-   찍은 순서를 `deploy.yaml` 에 `joint_names` + `joint_ids_map` 으로 저장하고, MuJoCo 쪽은 `mj_id2name` 으로 만든 맵과 대조. `default_joint_pos` 는 **IsaacLab 순서**, `kp/kd` 는 export 시 **SDK 순서**로 뒤집히는 비대칭이 unitree_rl_lab 에 실제로 있으므로(`export_deploy_cfg.py:30-36`) 그대로 흉내 내지 말고 한 쪽으로 통일할 것.
+1. **관절 순서 — 실측 완료, `deploy/contract/deploy.yaml` 참조.** 셋이 전부 다르다:
+   - IsaacLab(PhysX): **BFS** — `hip×4(FL,FR,RL,RR) → thigh×4 → calf×4`
+   - MJCF(menagerie): 다리별 — `FL,FR,RL,RR × (hip,thigh,calf)`
+   - Unitree SDK: 다리별 — `FR,FL,RR,RL × (hip,thigh,calf)`
+
+   매핑(`il_to_sdk` = `[3,0,9,6,4,1,10,7,5,2,11,8]`, `il_to_mj` = `[0,3,6,9,1,4,7,10,2,5,8,11]`)과
+   역방향까지 왕복 검증해 yaml 에 못박아 두었다. 재측정은
+   `deploy/tools/dump_isaaclab_joint_order.py` → `deploy/tools/build_joint_maps.py`.
+   `default_joint_pos` 는 **IsaacLab 순서**, `kp/kd` 는 export 시 **SDK 순서**로 뒤집히는 비대칭이
+   unitree_rl_lab 에 실제로 있으므로(`export_deploy_cfg.py:30-36`) 그대로 흉내 내지 말고 한 쪽으로 통일할 것.
+   **순서가 맞아도 회전축 부호 규약(USD vs MJCF)은 별도 확인이 필요하다 — 아직 미검증.**
+
+   부수 실측 2건:
+   - **기본 자세가 앞뒤 비대칭**이다: thigh 가 앞다리 0.8 / 뒷다리 **1.0**
+     (`[0.1,-0.1,0.1,-0.1, 0.8,0.8,1.0,1.0, -1.5×4]`). menagerie `home` 키프레임은
+     hip 0 / thigh 0.9 / calf −1.8 로 **다르다** — action offset 은 반드시 IsaacLab 값을 쓸 것.
+   - menagerie MJCF 에는 `Head_upper/Head_lower` 와 `*_foot` **바디가 없다**(발은 geom).
+     self-filter 캡슐이 이 이름들을 참조하므로 Phase 3 에서 대체 지점이 필요하다.
+   - 참고: `parkour_mdp_cfg.py` 의 `TeacherRewardsCfg` docstring 에 적힌 body 목록은 실측 순서와
+     다르다(문서만 낡음, regex 로 해석되므로 기능 영향 없음).
 2. **DC 모터 포화 미구현** (§1.7). 순수 PD 로 두면 고속 구간 토크가 과대해져 점프/착지가 달라진다.
 3. **1-step 액션 지연 누락.** 학습이 지연 있는 상태로 수렴했다. MuJoCo 하네스에서 끄고 켜며 둘 다 측정할 것.
 4. **`delta_yaw` 의 1.5배 불일치.** 학습(`learn_em`)은 obs[6],[7] 에 **raw** `delta_yaw` 를 넣는다 (`observations.py:75-77`). 그런데 `play.py --fixed_heading` 은 `1.5*delta` 를 넣는다 (`play.py:620-623`) — depth encoder 시절 스케일의 잔재다. **배포는 raw 를 쓸 것.** 두 값으로 PLAY 를 돌려 거동 차이를 먼저 확인하면 좋다.
@@ -315,8 +343,10 @@ Isaaclab_Parkour/
 
 ## 7. 검증 체크리스트
 
-- [ ] **선결**: `elevation_mapping_cupy` 재클론(`20a8a26`) + submodule/vendoring 고정, `smoke_em_backend.py` 통과
-- [ ] **선결**: `pip install mujoco` (현재 미설치), 관절 순서 3종(IsaacLab / MJCF / SDK) 실측 후 `deploy.yaml` 에 고정
+- [x] **선결**: `elevation_mapping_cupy` submodule 고정(`20a8a26`) + import 확인 (`smoke_em_backend.py` 는 GPU 확보 후 별도 실행)
+- [x] **선결**: `env_sim2real` 생성 + mujoco 3.12.0 설치
+- [x] **선결**: 관절 순서 3종(IsaacLab / MJCF / SDK) 실측 → `deploy/contract/deploy.yaml`
+- [ ] **선결**: 관절 회전축 부호 규약(USD vs MJCF) 대조, SDK 순서를 unitree_sdk2 헤더와 교차 검증
 - [ ] **P0**: 저장된 IsaacLab obs → MuJoCo 로더 action 차이 < 1e-5
 - [ ] **P1**: MuJoCo 정지 상태 GT scan 132 vs IsaacLab 동일 pose scan 차이 < 1e-3 m
 - [ ] **P1**: 같은 q_target 스텝 입력에 대한 관절 궤적(200Hz) 이 IsaacLab 과 육안 일치, 토크 포화 구간 재현
