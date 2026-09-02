@@ -22,6 +22,13 @@ play/evaluation 이 돌아가려면 필요한 수정이라 여기 두지 않았�
 
 A 를 먼저 끝내고 B 로 간다. A 없이 B 로 가면 "정책이 못 걷는다"의 원인이 물리 갭인지 배포 배선인지 구분할 수 없다.
 
+**확정된 작업 배치(2026-09-02, 사용자 결정):**
+- 트랙 A·B **둘 다 포크한 `unitree_rl_lab` 안에서** 한다. 이 저장소(`Isaaclab_Parkour`)는
+  **`policy.onnx` + `deploy.yaml` 을 뱉는 것까지만** 하고 이식 코드를 두지 않는다 (§6).
+- 트랙 A 의 Python 하네스는 우회가 아니라 **트랙 B 의 기준값 생성기**다. 이미 검증된
+  `elevation_map_backend.py`(순수 torch, isaaclab 비의존)를 복사해 그대로 쓰므로 EM 을 다시
+  짜지 않고 물리 갭만 분리해 잴 수 있고, 그 수치가 C++ 포팅의 합격 기준이 된다.
+
 ### unitree_rl_lab 에서 가져올 것 / 못 가져올 것
 
 **가져온다 (아키텍처):**
@@ -196,15 +203,20 @@ MuJoCo 기본 `position` actuator 에는 이 모델이 없다. **직접 계산�
 
 ## 3. 단계별 실행 계획
 
-### Phase 0 — 계약 동결 + 골든 트레이스 (반나절)
+### Phase 0 — ONNX 추출 + 골든 트레이스 (반나절, **이 저장소에서 하는 유일한 작업**)
 
 MuJoCo 코드를 한 줄도 쓰기 전에 한다. 이게 이후 모든 디버깅의 기준선이다.
 
-1. 위 §1 표를 `docs/deploy_contract.md` 로 확정.
+1. **`policy.onnx` 추출** — §6.1 의 3입력 시그니처로. EM student 용 exporter 가 없으므로 새로 쓴다.
+   `deploy/contract/deploy.yaml` 과 나란히 떨어뜨려 이 둘이 배포 repo 로 넘어가는 유일한 산출물이 되게 한다.
 2. `play.py` 에 트레이스 덤프를 붙여 **IsaacLab 에서 100 step 분량**을 npz 로 저장:
    `obs(753)`, `em_scan(132)`, `actions(12)`, `q, dq, τ`, `root_pos/quat/lin_vel/ang_vel`, `foot_contact`.
-3. **오프라인 골든 테스트**: 저장된 obs 를 그대로 MuJoCo 하네스의 정책 로더에 넣어 action 이 **1e-5 이내로 일치**하는지 확인.
-   → 정책 로딩·레이어 순서·estimator 배선 오류를 물리와 분리해서 잡는다. 여기서 안 맞으면 뒤 단계는 전부 무의미하다.
+3. **오프라인 골든 테스트**: 저장된 트레이스의 prop/scan/hist 를 `policy.onnx` 에 넣어
+   IsaacLab 이 낸 action 과 **1e-5 이내로 일치**하는지 확인.
+   → 정책 로딩·레이어 순서·estimator 배선·슬라이스 정렬 오류를 물리와 분리해서 잡는다.
+   여기서 안 맞으면 뒤 단계는 전부 무의미하다.
+
+Phase 1 부터는 포크한 `unitree_rl_lab` 안에서 진행한다.
 
 ### Phase 1 — MuJoCo 씬 구성 (1~2일)
 
@@ -314,30 +326,72 @@ MuJoCo 코드를 한 줄도 쓰기 전에 한다. 이게 이후 모든 디버깅
 
 ---
 
-## 6. 제안 디렉토리 구조
+## 6. 저장소 경계와 디렉토리 구조
+
+**결정(2026-09-02): 저장소를 둘로 나눈다.** 학습 repo 는 산출물만 뱉고, 이식·배포 코드는
+포크한 `unitree_rl_lab` 에만 쌓는다. 이건 unitree_rl_lab 자신의 규약이기도 하다 — 그쪽은
+학습 repo 가 `exported/policy.onnx` + `params/deploy.yaml` 을 만들고 배포 프로그램이
+그 둘을 읽는다(`export_deploy_cfg.py` 가 학습 스크립트에서 호출된다).
 
 ```
-Isaaclab_Parkour/
-├─ deploy/
-│  ├─ contract/
-│  │   ├─ deploy_contract.md          # §1 표
-│  │   └─ deploy.yaml                 # joint 순서, 게인, 스케일, 차원
-│  ├─ common/                         # IsaacLab/MuJoCo/실기 공용 (torch, 시뮬 무관)
-│  │   ├─ obs_assembler.py            # §1.2 조립 + history 큐
-│  │   ├─ policy_runner.py            # depth_actor + estimator 로더
-│  │   ├─ em_pipeline.py              # self-filter + 노이즈 + odom drift + EM + 샘플
-│  │   └─ l1_scan.py                  # 방향 생성 (raycast 백엔드는 주입)
-│  ├─ mujoco/
-│  │   ├─ go2_scene.xml / terrain.obj|hfield
-│  │   ├─ raycast_mj.py               # mj_multiRay 백엔드
-│  │   └─ run_sim2sim.py              # 200Hz PD + DC 포화 + 1-step 지연
-│  └─ tools/
-│      ├─ dump_golden_trace.py        # IsaacLab 트레이스 덤프
-│      ├─ export_terrain.py           # 지형 → OBJ/hfield
-│      └─ compare_traces.py           # IsaacLab vs MuJoCo 지표 비교
+Isaaclab_Parkour  (이 repo — 학습 전용, 인터페이스는 아래 둘뿐)
+└─ deploy/
+   ├─ contract/deploy.yaml         # 관절 순서·게인·스케일·차원 (완료)
+   ├─ tools/                       # 실측/덤프 도구
+   │   ├─ dump_isaaclab_joint_order.py   (완료)
+   │   ├─ build_joint_maps.py            (완료)
+   │   ├─ export_em_student_onnx.py      # ★ 미구현 — 아래 §6.1
+   │   ├─ dump_golden_trace.py           # IsaacLab 100 step 트레이스
+   │   └─ export_terrain.py              # 지형 → OBJ/hfield
+   └─ (그 외 이식 코드는 여기 두지 않는다)
+
+unitree_rl_lab (포크)  — 이식·배포 전부
+└─ deploy/
+   ├─ parkour/
+   │   ├─ common/                  # 시뮬레이터 무관, 세 곳에서 글자 그대로 같아야 하는 코드
+   │   │   ├─ obs_assembler.py     # §1.2 조립 + history 큐 + 10Hz 게이팅
+   │   │   ├─ policy_runner.py     # policy.onnx 로더
+   │   │   ├─ em_pipeline.py       # self-filter + 노이즈 + odom drift + EM + 샘플
+   │   │   └─ l1_scan.py           # L1 방향 생성 (raycast 백엔드는 주입)
+   │   ├─ vendored/                # Isaaclab_Parkour 에서 복사 (순수 torch, isaaclab 비의존)
+   │   │   ├─ elevation_map_backend.py
+   │   │   └─ self_filter_capsules.py
+   │   └─ mujoco/
+   │       ├─ go2_scene.xml / terrain.obj|hfield
+   │       ├─ raycast_mj.py        # mj_multiRay 백엔드
+   │       └─ run_sim2sim.py       # 200Hz PD + DC 포화 + 1-step 지연
+   └─ robots/go2_parkour/          # 트랙 B: 커스텀 State_Parkour (C++)
 ```
 
-`deploy/common/` 이 핵심이다. **여기 있는 코드는 IsaacLab·MuJoCo·실기 세 곳에서 글자 그대로 같은 것**이어야 하며, 시뮬레이터별 차이는 raycast 백엔드와 상태 읽기 어댑터로만 주입한다. 이렇게 해야 "sim2sim 갭"이 물리 갭인지 구현 갭인지 구분된다.
+`common/` 이 핵심이다. **여기 있는 코드는 MuJoCo 하네스와 실기에서 글자 그대로 같은 것**이어야
+하며, 차이는 raycast 백엔드와 상태 읽기 어댑터로만 주입한다. 그래야 "sim2sim 갭"이 물리 갭인지
+구현 갭인지 구분된다.
+
+`vendored/` 는 복사본이다. 학습 repo 를 파이썬 의존성으로 걸면 배포 쪽이 IsaacLab 설치를
+요구하게 되므로(패키지 `__init__` 이 isaaclab 을 끌어온다) **파일 단위로 복사**하고, 원본 커밋
+SHA 를 파일 머리에 적어 둔다.
+
+### 6.1 ONNX export 인터페이스 (미구현)
+
+현재 `play.py` 는 EM student 의 export 를 지원하지 않는다 —
+`"[INFO] EMDistillation: JIT/ONNX export 는 지원하지 않는다"`. depth student 용 exporter 만 있다.
+
+정책에 재귀 구조가 없음을 확인했으므로(`depth_actor` 는 `priv_encoder / history_encoder /
+scan_encoder / actor_backbone` 뿐, GRU/LSTM 없음) **상태 없는 순수 함수 하나로 뽑을 수 있다.**
+권장 시그니처는 753 통짜가 아니라 3입력이다:
+
+```
+inputs : prop(1,53)  scan(1,132)  hist(1,530)
+outputs: actions(1,12)
+내부   : estimator(prop)→9, scan_encoder(scan)→32, history_encoder(hist)→20,
+         actor_backbone(concat 114)→12
+```
+
+- `priv_latent` 29 칸은 `hist_encoding=True` 경로에서 쓰이지 않으므로 인터페이스에서 뺀다.
+  753 통짜로 뽑으면 배포 쪽이 슬라이스 정렬을 틀릴 여지만 남는다.
+- unitree_rl_lab 의 `OrtRunner` 는 ONNX 입력을 **이름으로** 조회하므로 다입력이 그대로 맞는다
+  (`deploy/include/isaaclab/algorithms/algorithms.h:40-83`).
+- 정책 바깥에 남는 유일한 상태는 **history 링버퍼**다. 배포 코드가 관리한다.
 
 ---
 
@@ -347,7 +401,9 @@ Isaaclab_Parkour/
 - [x] **선결**: `env_sim2real` 생성 + mujoco 3.12.0 설치
 - [x] **선결**: 관절 순서 3종(IsaacLab / MJCF / SDK) 실측 → `deploy/contract/deploy.yaml`
 - [ ] **선결**: 관절 회전축 부호 규약(USD vs MJCF) 대조, SDK 순서를 unitree_sdk2 헤더와 교차 검증
-- [ ] **P0**: 저장된 IsaacLab obs → MuJoCo 로더 action 차이 < 1e-5
+- [ ] **선결**: `unitree_rl_lab` 포크 + origin 교체 (이식 코드를 쌓을 곳)
+- [ ] **P0**: EM student `policy.onnx` 추출 (§6.1 3입력 시그니처)
+- [ ] **P0**: 저장된 IsaacLab 트레이스 → `policy.onnx` action 차이 < 1e-5
 - [ ] **P1**: MuJoCo 정지 상태 GT scan 132 vs IsaacLab 동일 pose scan 차이 < 1e-3 m
 - [ ] **P1**: 같은 q_target 스텝 입력에 대한 관절 궤적(200Hz) 이 IsaacLab 과 육안 일치, 토크 포화 구간 재현
 - [ ] **P2**: GT scan 으로 난이도 0.7 사다리꼴 통과율이 IsaacLab PLAY 대비 −20%p 이내
