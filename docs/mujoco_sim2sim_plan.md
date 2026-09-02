@@ -203,7 +203,18 @@ MuJoCo 기본 `position` actuator 에는 이 모델이 없다. **직접 계산�
 
 ## 3. 단계별 실행 계획
 
-### Phase 0 — ONNX 추출 + 골든 트레이스 (반나절, **이 저장소에서 하는 유일한 작업**)
+### Phase 0 — ONNX 추출 + 골든 트레이스 ✅ **완료 (2026-09-02)**
+
+산출물 3개가 `logs/rsl_rl/unitree_go2_parkour/student_pretrained/trained_v1.3~30K/exported/`
+에 있다 (logs/ 는 gitignore 라 저장소에는 도구만 들어간다):
+`policy.onnx`(1.1MB) · `onnx_reference.npz` · `golden_trace.npz`(100 스텝).
+**골든 테스트 PASS**: IsaacLab 실관측 100 샘플에서 max|diff| = 4.77e-6 (허용 1e-5).
+
+작업 중 걸린 함정 3개는 §4 의 17~19 번에 적어 두었다.
+
+---
+
+#### (원래 계획) — **이 저장소에서 하는 유일한 작업**
 
 MuJoCo 코드를 한 줄도 쓰기 전에 한다. 이게 이후 모든 디버깅의 기준선이다.
 
@@ -311,6 +322,26 @@ Phase 1 부터는 포크한 `unitree_rl_lab` 안에서 진행한다.
 15. **obs clip ±100**, 정규화기 없음(Identity).
 16. **EM 리셋 시맨틱.** 텔레포트/리셋 때 맵을 비우고 h_obs=0. 배포에서는 리셋이 없으므로 "시작 시 맵이 비어 있는 동안 h_obs=0" 구간을 어떻게 다룰지 결정해야 한다(로봇이 제자리에서 한 바퀴 스캔 후 출발 등).
 
+**아래 3개는 Phase 0 을 하면서 실제로 걸린 것들이다.**
+
+17. **`simulation_app.close()` 는 예외와 종료코드를 통째로 삼킨다.**
+    `try: main() finally: simulation_app.close()` 로 감싸면 실패가 "출력 한 줄 없이
+    exit 0" 으로 나온다. 이것 때문에 두 번 헤맸다. 대응: 예외를 **먼저** 찍고 flush 한
+    뒤 닫고, `[RESULT] OK|FAILED` 마커를 남긴다. **종료코드로 성공 판정하지 말 것** —
+    산출물 파일이나 마커로 판정한다. 덧붙여 Isaac 은 C++ 쪽 stdout 을 따로 쓰므로
+    파이썬 출력과 순서가 섞인다. `python -u` 로 돌려야 어디서 죽었는지 보인다.
+18. **student 씬의 `record_camera` 는 상시로 켜져 있다.** TiledCamera 라
+    `--enable_cameras` 없이는 `RuntimeError: A camera was spawned without the
+    --enable_cameras flag` 로 죽고, 켜면 env 마다 렌더가 돌아 VRAM 을 먹는다.
+    train.py 가 학습 경로에서 떼어내듯 스크립트에서 `scene.record_camera = None` 로
+    비우고 시작할 것.
+19. **수치 비교에 절대 오차만 쓰면 안 된다.** ONNX 변환은 연산 순서를 바꾸므로
+    float32 반올림 차이가 **값 크기에 비례**해 생긴다(eps=1.2e-7). 표준정규 랜덤
+    입력을 넣으면 액션이 |35| 까지 커지고, 그 상태의 1.1e-5 차이는 상대 3.2e-7 —
+    그냥 반올림인데 절대 기준 1e-5 로는 FAIL 로 보인다. ① 판정은
+    `|d| <= atol + rtol·|want|` 로, ② 테스트 입력은 **실제 관측 규모**로 만들 것
+    (prop/hist ~0.3 스케일, scan 은 정의상 ±1).
+
 ---
 
 ## 5. sim2real 로 가기 전에 반드시 풀어야 할 것
@@ -402,8 +433,11 @@ outputs: actions(1,12)
 - [x] **선결**: 관절 순서 3종(IsaacLab / MJCF / SDK) 실측 → `deploy/contract/deploy.yaml`
 - [ ] **선결**: 관절 회전축 부호 규약(USD vs MJCF) 대조, SDK 순서를 unitree_sdk2 헤더와 교차 검증
 - [ ] **선결**: `unitree_rl_lab` 포크 + origin 교체 (이식 코드를 쌓을 곳)
-- [ ] **P0**: EM student `policy.onnx` 추출 (§6.1 3입력 시그니처)
-- [ ] **P0**: 저장된 IsaacLab 트레이스 → `policy.onnx` action 차이 < 1e-5
+- [x] **P0**: EM student `policy.onnx` 추출 (§6.1 3입력 시그니처) — `deploy/tools/export_em_student_onnx.py`
+- [x] **P0**: 골든 트레이스 100 스텝 덤프 — `deploy/tools/dump_golden_trace.py`
+- [x] **P0**: **골든 테스트 PASS** — IsaacLab 실관측 100 샘플에서 `max|diff| = 4.77e-6`
+      (허용 1e-5), 평균 2.4e-7. torch 기준값 검사도 `max|diff| = 6.68e-6`.
+      검증은 torch/IsaacLab 없이 onnxruntime+numpy 만으로 수행 (`check_onnx_against_trace.py`)
 - [ ] **P1**: MuJoCo 정지 상태 GT scan 132 vs IsaacLab 동일 pose scan 차이 < 1e-3 m
 - [ ] **P1**: 같은 q_target 스텝 입력에 대한 관절 궤적(200Hz) 이 IsaacLab 과 육안 일치, 토크 포화 구간 재현
 - [ ] **P2**: GT scan 으로 난이도 0.7 사다리꼴 통과율이 IsaacLab PLAY 대비 −20%p 이내
