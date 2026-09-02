@@ -229,7 +229,26 @@ MuJoCo 코드를 한 줄도 쓰기 전에 한다. 이게 이후 모든 디버깅
 
 Phase 1 부터는 포크한 `unitree_rl_lab` 안에서 진행한다.
 
-### Phase 1 — MuJoCo 씬 구성 (1~2일)
+### Phase 1 — MuJoCo 씬 구성 ✅ **완료 (2026-09-02)**
+
+포크한 `unitree_rl_lab` 의 `deploy/parkour/` 에서 진행했다 (커밋 `fa7dde7`).
+이 저장소 쪽 몫은 `deploy/tools/export_terrain.py` 하나다.
+
+- 지형은 **hfield** 로 넣는다. MuJoCo 의 `type="mesh"` geom 은 충돌 시 볼록껍질로
+  근사되므로 계단·단차 지형을 mesh 로 넣으면 물리가 완전히 달라진다.
+- 높이 격자는 241×561, 간격 0.05 m (= `horizontal_scale/2`).
+- **검증 PASS 2건**: ① 무작위 4000점에서 MuJoCo hfield vs IsaacLab 삼각망 지면 높이
+  — mean 3.29 mm, p99 80 mm, 1 cm 초과 1.70 %. ② 로봇이 스폰 지점에서 지상고
+  0.3044 m 로 안정 (Go2 공칭 자세와 일치).
+- 남은 오차의 정체: 단차 **수직면**이다. 0.05 m 격자로는 셀 안에서 벽면 위치를
+  정확히 잡을 수 없어 최대 1 m(벽 높이 전체)까지 어긋난다. 발이 모서리를 밟는
+  거동에 영향이 있으므로, Phase 2 에서 문제가 보이면 `--res 0.025` 로 줄일 것.
+
+작업 중 걸린 함정은 §4 의 20~22 번에 적었다.
+
+---
+
+#### (원래 계획)
 
 1. **Go2 모델**: `mujoco_menagerie/unitree_go2/go2.xml` 또는 `unitree_mujoco` 동봉 MJCF.
    - `Head_upper` / `Head_lower` 바디가 있어야 한다 (학습 씬에 존재, self-filter 캡슐과 LiDAR self-occlusion 에 영향).
@@ -341,6 +360,21 @@ Phase 1 부터는 포크한 `unitree_rl_lab` 안에서 진행한다.
     그냥 반올림인데 절대 기준 1e-5 로는 FAIL 로 보인다. ① 판정은
     `|d| <= atol + rtol·|want|` 로, ② 테스트 입력은 **실제 관측 규모**로 만들 것
     (prop/hist ~0.3 스케일, scan 은 정의상 ±1).
+
+20. **지형 삼각망은 원본 높이맵의 조밀 격자가 아니다.** `parkour_field_to_mesh` 가
+    ① `slope_threshold` 로 꼭짓점을 **반칸(0.05 m)** 위치로 옮기고(꼭짓점의 57%만
+    0.1 격자에 있다) ② `cfg.use_simplified` 로 quadric decimation 을 걸어 면을 35%
+    줄여서 평지에는 내부 꼭짓점이 아예 없다. "꼭짓점을 격자에 되꽂으면 높이맵이
+    복원된다"고 짰다가 채움률 19.6%, 검증 오차 53 mm 로 실패했다.
+    **레이캐스팅으로 구워야** 물리와 height_scanner 가 실제로 보는 그 지형이 나온다.
+21. **MuJoCo 의 `mj_ray` 는 씬의 모든 geom 을 본다.** 지면 높이를 재려고 위에서
+    쐈더니 로봇 몸통을 먼저 맞혀 "발밑 지면 0.352 m" 라는 값이 나왔다.
+    지형만 겨냥하려면 **`mj_rayHfield`**(geom 지정)를 쓸 것.
+22. **`<include>` 는 `meshdir` 를 최상위 파일 기준으로 해석한다.** menagerie 의
+    `go2.xml` 을 다른 디렉터리에서 include 하면 mesh 경로가 전부 깨진다.
+    include **뒤에** `<compiler meshdir="...">` 를 다시 선언해 덮어쓰면 된다.
+    (덤: 이 저장소 계열의 `.gitignore` 에 `*.obj`/`*.npz` 가 있으면 MJCF 메시와
+    지형 데이터가 조용히 커밋에서 빠진다. 하위 `.gitignore` 의 `!` 로 되살릴 것.)
 
 ---
 
