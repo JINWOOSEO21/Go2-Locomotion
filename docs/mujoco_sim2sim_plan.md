@@ -270,17 +270,88 @@ Phase 1 부터는 포크한 `unitree_rl_lab` 안에서 진행한다.
 - `delta_yaw` 는 아직 오라클: MuJoCo 지형에 동일한 goal waypoint 를 심고 같은 식으로 계산하거나, 우선 **전방 고정 heading** 으로 대체.
 - 성공 기준: 난이도 0.7 사다리꼴에서 IsaacLab PLAY 와 **비슷한 통과율**. 여기서 크게 떨어지면 EM 이 아니라 물리/액추에이터 문제다.
 
-### Phase 3 — L1 LiDAR + EM 파이프라인 (3~5일)
+### Phase 3 — L1 LiDAR + EM 파이프라인
 
-1. `L1ScanRayCaster.valid_frame_times` / `directions_from_angles` 를 그대로 써서 0.1s 프레임의 2160개 (α, β) → 센서 프레임 방향 생성. 마운트: `pos=(0.28, 0, 0.10)`, `rot=(0,1,0,0)` (X축 180° = 돔 하향) (`default_cfg.py` `GO2_LIDAR_CFG`).
-2. **`mujoco.mj_multiRay`** 로 캐스트. L1 은 전 ray 가 **공통 원점**이라 `mj_multiRay` 시그니처와 정확히 맞는다. 로봇 자신도 캐스트 대상에 포함(= IsaacLab 이 `Robot/.*/collisions` 를 타깃에 넣은 것과 동일).
-3. 동일한 self-filter 캡슐 적용 → `valid` 마스크.
-4. 동일한 노이즈: `range_std=0.02`, `ray_dir_std_deg=0.2`.
-5. odometry drift 모델(§1 의 `odom_*` 파라미터) 을 **그대로 적용**. MuJoCo GT pose 에 학습과 같은 분포의 오차를 얹어야 입력 분포가 일치한다.
-6. `BatchedElevationMapBackend(num_envs=1, ...)` 에 `update()` → `sample()` → 132.
-7. **회귀 게이트**: 동일 지형·동일 궤적에서 IsaacLab em_scan 과 MuJoCo em_scan 의 셀당 평균 |차이| 를 비교. `play.py --em_error_plot` 이 이미 GT 대비 오차를 뽑으므로 같은 지표로 두 시뮬을 나란히 놓는다.
+> **경로 변경 (2026-09-03).** 원래 계획은 이 저장소에 파이썬 MuJoCo 하네스를 두고
+> `mj_multiRay` 로 직접 캐스트하는 것이었다. 실제로는 unitree_rl_lab README 대로
+> **`unitree_mujoco` 를 로봇 하드웨어 대역으로 두고 DDS 로 붙이는** 구성으로 갔다.
+> 그래야 sim2sim 에서 만든 코드가 그대로 실기로 넘어간다 (하네스는 실기에 없다).
+> 아래는 실제로 한 것이다.
 
-> cupy 버전은 13.x 로 고정 (기존 제약). MuJoCo 하네스도 같은 conda 환경(`env_isaaclab`)에서 돌리는 편이 의존성 충돌이 적다. `mujoco` 는 아직 미설치 — `pip install mujoco` 필요.
+역할 분담:
+
+```
+[unitree_mujoco]  로봇 하드웨어 대역 (C++)        [사이드카]  젯슨에서 돌 코드 (파이썬)
+  L1 스캔 운동학 + mj_ray  → rt/utlidar/cloud  ─→  self-filter → EM → scandots 132
+  발 접촉력            → rt/lowstate         ─→  rt/parkour/scandots (HeightMap_)
+  odometry            → rt/sportmodestate    ─┘
+```
+
+**3-1. 발 접촉력** ✅ `f28d53e` — go2.xml 에 발 site 4개 + `<touch>` 센서(SDK 순서
+FR/FL/RR/RL), 브리지가 `lowstate.foot_force` 를 채운다.
+게이트: 기립 시 접촉력 합 **146 N** vs 로봇 무게 149.2 N.
+함정: `run()` 이 go2(`unitree_go`)/g1(`unitree_hg`) 공용 템플릿인데 **휴머노이드 IDL 에는
+`foot_force` 가 없다** → `if constexpr` 로 분기.
+
+**3-2. L1 LiDAR** ✅ `323f41e` — 이중 모터 스캔 운동학을 C++ 로 옮겨 `mj_ray` 로 캐스트,
+`rt/utlidar/cloud` 에 PointCloud2 발행 (센서 프레임, self-hit 유지 = 실기와 동일).
+게이트: 파이썬 원본을 (isaaclab 만 스텁으로 끼워) **그대로 불러와** 대조 →
+`max|diff| = 5e-13`. 프레임당 1,150~1,220점.
+함정: ① 몸통 body 이름이 unitree 공식은 `base_link`(menagerie 는 `base`) — 못 찾으면
+LiDAR 가 **조용히 꺼진다**. ② 브리지 스레드가 첫 물리 스텝보다 먼저 돌면 `d->xmat` 이
+영행렬이라 `mj_ray` 가 시뮬레이터를 **죽인다** → `mju_norm3(base_mat) < 0.5` 가드.
+
+**3-3. EM 사이드카** ✅ — `unitree_rl_lab/deploy/parkour/em_sidecar/`.
+파이썬으로 먼저 만들고(a) 나중에 C++ 로 옮긴다(b). 그 사이 인터페이스가 DDS 토픽이라
+발행자가 바뀌어도 소비자는 한 줄도 안 바뀐다.
+
+| 구성요소 | 내용 |
+| --- | --- |
+| `kinematics.py` | Go2 순기구학 + 캡슐 끝점. **순수 numpy** (젯슨에 물리엔진 불필요) |
+| `selffilter.py` | 캡슐 관통 판정 — 학습 원본의 numpy 판 |
+| `vendored/elevation_map_backend.py` | 학습 코드 **글자 그대로** 복사 (sha256 기록) |
+| `sidecar.py` | DDS 구독 → 파이프라인 → `rt/parkour/scandots` (`HeightMap_`) |
+
+기구학 상수는 **손으로 옮겨 적지 않았다.** `dump_em_geometry.py` 가 IsaacLab 에서
+자세 8개의 링크 pose 를 실측하고, `build_em_contract.py` 가 거기서 관절 축·오프셋을
+**역산**한다 (R(θᵢ)ᵀR(θⱼ) = Rot(axis, θⱼ−θᵢ)). 산출된 값은 MJCF 와 정확히 일치했고
+FK 재현 오차는 **0.0006 mm** 였다 — 즉 IsaacLab USD 와 MJCF 의 기구학이 같다는 것도
+덤으로 확인됐다.
+
+학습과 **일부러 다르게 한 것**: range/빔 잡음과 odometry drift 모델은 넣지 않았다.
+그건 전부 domain randomization, 즉 실기에서 저절로 생길 오차의 흉내다. 배포에서는
+진짜로 생기므로 다시 얹으면 이중 계상이 된다. (MuJoCo 레이캐스트는 정확하므로
+sim2sim 에서는 이 항이 비어 있다 — 알려진 격차로 남긴다.) self-filter 는 반대로
+실기에도 필요하므로 그대로 옮겼다.
+
+게이트 3종:
+
+| 게이트 | 방법 | 결과 |
+| --- | --- | --- |
+| 기구학 | IsaacLab 실측 링크 위치 재현 | max **0.0006 mm** |
+| self-filter | 학습 원본 `ray_capsule_penetrates` 와 직접 대조 (4000점 x 캡슐 14) | 불일치 **0** (판정 비율 30.4%) |
+| 파이프라인 (오프라인) | 수식 계단 지형에 합성 점군 → scandots vs 해석 정답 | 모서리 밖 **0.005 cm**, 계단 높이 −0.1199 vs 정답 −0.1200 |
+| 배관 (라이브) | 시뮬레이터 → DDS → 사이드카 전 경로 | 바닥 z **0.000 cm**, 직접관측 셀 오차 **0.002 cm** |
+
+라이브 게이트에서 나온 함정 (둘 다 조용히 틀리는 종류):
+
+- **`rt/sportmodestate.position` 은 base 원점이 아니라 imu **site** 위치다.**
+  `<framepos objtype="site" objname="imu"/>`, site 는 base 기준 `(-0.02557, 0, 0.04232)`.
+  이걸 안 빼면 센서 마운트(0.28, 0, 0.10)를 엉뚱한 점에 얹게 되고, 지도는 누적되므로
+  로봇이 회전할 때마다 최대 5 cm 씩 어긋난다. (같은 tick 안에서는 상쇄돼 **평지에서는
+  안 보인다** — 점군을 월드로 올려 바닥 절대높이를 재야 잡힌다.)
+  실기의 SportModeState 는 몸체 프레임이라 그 경우 0 이어야 한다 → `SidecarCfg.odom_offset_in_base` [실측 필요].
+- **직접관측 셀과 upper_bound 대체 셀을 갈라 봐야 한다.** 엎드린 로봇 밑처럼 한 번도
+  못 본 셀은 cascade 2단계(upper_bound)로 채워지고 11.8 cm 어긋난다 — 학습 때도
+  그랬으므로 정상이다. 뭉뚱그려 재면 멀쩡한 파이프라인이 FAIL 로 보인다.
+  진단용으로 `rt/parkour/scandots_valid` 에 `valid_frac` 을 함께 낸다.
+
+**3-4. `State_Parkour` (다음)** — `unitree_rl_lab/deploy/robots/` 에 FSM 상태를 추가해
+obs 53 을 직접 조립하고(ObservationManager 경유 아님), history 링버퍼를 굴리고,
+ONNX 3입력 호출 → 1스텝 액션 지연 → `il_to_sdk` 매핑으로 `lowcmd` 를 낸다.
+게이트: C++ 가 조립한 obs 를 `golden_trace.npz` 와 대조.
+
+**3-5.** 지형 교체(IsaacLab 지형 hfield) + 통합 주행.
 
 ### Phase 4 — 도메인 갭 계량 (1~2일)
 
