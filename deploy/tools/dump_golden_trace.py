@@ -34,6 +34,12 @@ from isaaclab.app import AppLauncher
 _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO, "scripts", "rsl_rl"))
 sys.path.insert(0, _REPO)
+# 함정: repo 루트를 sys.path 앞에 넣으면 `parkour_tasks/`(바깥 디렉터리, __init__.py 없음)가
+# **네임스페이스 패키지**로 잡혀 진짜 패키지(parkour_tasks/parkour_tasks/)를 가린다.
+# 그러면 import 는 조용히 성공하는데 gym 등록이 하나도 안 되고, 뒤늦게
+# "Environment `Isaac-Extreme-Parkour-...` doesn't exist" 로만 드러난다.
+# 안쪽 경로를 더 앞에 넣어 워크트리의 진짜 패키지를 쓰게 한다.
+sys.path.insert(0, os.path.join(_REPO, "parkour_tasks"))
 
 import cli_args  # noqa: E402  (scripts/rsl_rl/cli_args.py)
 
@@ -111,13 +117,32 @@ def main():
 
     robot = env.unwrapped.scene["robot"]
     contacts = env.unwrapped.scene.sensors["contact_forces"]
-    foot_ids = robot.find_bodies(".*_foot")[0]
+    # 함정: 접촉 센서의 바디 순서는 articulation 의 순서와 **다르다**.
+    #   접촉센서    : base, FL_hip, FL_thigh, FL_calf, FL_foot, FR_hip, ...  → 발 [4, 8, 14, 18]
+    #   articulation: base, FL_hip, FR_hip, Head_upper, ... (BFS)            → 발 [15,16,17,18]
+    # robot.find_bodies() 로 얻은 인덱스로 센서 텐서를 인덱싱하면 엉뚱한 바디
+    # (RR_hip/RR_thigh/RR_calf)를 읽어 값이 거의 항상 0 이 된다. 관측항이 쓰는
+    # SceneEntityCfg("contact_forces", body_names=".*_foot") 와 같은 출처에서 뽑는다.
+    foot_ids = [i for i, n in enumerate(contacts.body_names) if n.endswith("_foot")]
+    foot_ids = sorted(foot_ids, key=lambda i: ["FL", "FR", "RL", "RR"].index(
+        contacts.body_names[i][:2]))
 
     rec: dict[str, list] = {k: [] for k in (
         "prop", "scan", "hist", "actions", "obs",
         "joint_pos", "joint_vel", "applied_torque",
         "root_pos_w", "root_quat_w", "root_lin_vel_b", "root_ang_vel_b",
         "foot_contact_forces", "episode_length",
+        # 접촉 관측(prop[49:53])이 실제로 쓰는 텐서들. net_forces_w 만 기록했더니
+        # 값이 거의 0 이라 prop 과 대조가 안 됐다 — 관측항은 history 버퍼를 본다
+        # (observations.py `_get_contact_fill`). 그래서 그 두 슬라이스와 최종
+        # contact_filt 를 그대로 남긴다. 배포측 C++ 게이트의 기준값이다.
+        "contact_now", "contact_prev", "contact_filt",
+        # 전 바디 접촉력. foot 만 골라 기록했더니 prop[49:53] 과 안 맞아서,
+        # "어느 바디가 맞는가" 를 추측하지 않고 **찾을 수 있게** 통째로 남긴다.
+        # (접촉 센서의 바디 순서가 articulation 의 순서와 다를 수 있다.)
+        "contact_all_now", "contact_all_prev",
+        # 조향/명령 원본. 배포에서는 이 자리를 우리가 만들어 넣으므로 기준값이 필요하다.
+        "delta_yaw", "delta_next_yaw", "commands",
     )}
 
     def add(name, t):
@@ -148,6 +173,18 @@ def main():
             add("root_lin_vel_b", robot.data.root_lin_vel_b)
             add("root_ang_vel_b", robot.data.root_ang_vel_b)
             add("foot_contact_forces", contacts.data.net_forces_w[:, foot_ids])
+            # _get_contact_fill 과 **글자 그대로 같은** 인덱싱으로 남긴다.
+            hist_f = contacts.data.net_forces_w_history
+            add("contact_now", hist_f[:, 0, foot_ids])
+            add("contact_prev", hist_f[:, -1, foot_ids])
+            add("contact_all_now", hist_f[:, 0])
+            add("contact_all_prev", hist_f[:, -1])
+            c_now = torch.norm(hist_f[:, 0, foot_ids], dim=-1) > 2.0
+            c_prev = torch.norm(hist_f[:, -1, foot_ids], dim=-1) > 2.0
+            add("contact_filt", (torch.logical_or(c_now, c_prev).float() - 0.5))
+            add("delta_yaw", obs_em[:, 6:7])
+            add("delta_next_yaw", obs_em[:, 7:8])
+            add("commands", env.unwrapped.command_manager.get_command("base_velocity"))
             add("episode_length", env.unwrapped.episode_length_buf)
 
             obs, _, _, extras = env.step(actions)
@@ -158,7 +195,10 @@ def main():
 
     out = {k: np.stack(v, axis=0) for k, v in rec.items()}   # (T, num_envs, ...)
     out["joint_names"] = np.array(robot.data.joint_names)
-    out["foot_body_names"] = np.array([robot.data.body_names[i] for i in foot_ids])
+    out["foot_body_names"] = np.array([contacts.body_names[i] for i in foot_ids])
+    out["robot_body_names"] = np.array(robot.data.body_names)
+    out["contact_body_names"] = np.array(contacts.body_names)
+    out["foot_ids_contact_sensor"] = np.array(foot_ids)
     out["meta_dims"] = np.array([P, S, PE, H])
     out["checkpoint"] = np.array(resume_path)
     out["task"] = np.array(args_cli.task)
