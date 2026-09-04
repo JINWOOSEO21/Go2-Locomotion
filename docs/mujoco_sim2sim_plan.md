@@ -181,7 +181,23 @@ a_raw(12)  ─► [1-step 지연 큐]  ─► clip(±4.8) ─► ×0.25 + q_defa
 τ_min = clip( τ_sat·(−1 − dq/dq_lim), −τ_lim, 0 )
 τ = clip(τ, τ_min, τ_max)
 ```
-MuJoCo 기본 `position` actuator 에는 이 모델이 없다. **직접 계산해 `d.ctrl` 에 토크로 넣어야 한다** (motor actuator + 200Hz 수동 PD). 이걸 빼먹는 것이 sim2sim 실패의 흔한 1순위다.
+
+> **해결됨 (2026-09-04, 사용자 결정 = 안 A).** 이 모델을 **시뮬레이터 브리지**에 넣었다
+> (`unitree_mujoco` `12d8adb`). 배포 코드는 실기와 똑같이 `q/kp/kd` 만 보내고, 토크 한계는
+> 하드웨어 대역인 시뮬레이터가 건다 — 실기로 옮길 때 되돌릴 코드가 없다.
+> 한계값은 `simulate/config.yaml` 의 `motor_saturation` 절.
+>
+> 그 과정에서 **더 큰 함정**이 하나 드러났다: `go2.xml` 의 `ctrlrange` 가 Go2 실기 스펙
+> (hip/thigh ±23.7, calf ±45.43 N·m)인데 **학습은 hip 35 / thigh 40 으로 돌았다.**
+> 그대로 두면 MuJoCo 가 23.7 에서 먼저 잘라 학습을 재현할 수 없다(hip/thigh 40% 부족).
+> ctrlrange 를 열어 두고 한계는 위 모델이 담당하게 했다.
+>
+> **남는 사실 하나 — sim2real 위험**: 정책은 실기 스펙보다 센 모터를 전제로 학습됐다.
+> sim2sim 은 "이식이 맞았는가" 를 보는 단계라 학습값을 쓰고, 실기 스펙으로 낮췄을 때
+> 버티는지는 Phase 4 에서 따로 잰다 (config 값만 바꾸면 된다).
+>
+> 게이트: `unitree_mujoco/example/test_motor_saturation.py` — 정지 상태에서 관절별 한계
+> (hip 35.000 / thigh·calf 40.000)에서 정확히 잘리고 12/12 도달, 속도 의존 포락선 위반 0.
 
 ---
 
