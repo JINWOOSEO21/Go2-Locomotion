@@ -560,6 +560,85 @@ roll 이 0.41 rad 로 튄다).
    - (c) Python 전체 배포 (`unitree_sdk2_python`). 실기 지터가 커서 권장하지 않음.
 4. 안전: `bad_orientation(>1.0 rad)` → Passive 를 그대로 유지 (`deploy/include/isaaclab/envs/mdp/terminations.h:10-15`).
 
+
+### Phase 6 — 자체 odometry: 다리 운동학 + IMU (2026-09-08)
+
+**왜 필요한가.** 정책이 배포에서 출처가 비는 양은 base **위치(xy, z)** 하나뿐이다.
+선속도는 정책 안의 estimator MLP(`prop → 9`)가, 자세/yaw 는 `rt/lowstate` IMU 가 이미
+담당한다(둘 다 sport 서비스와 무관). 위치를 쓰는 곳은 EM 사이드카뿐이고, 지도는
+3.2 m 국소 창을 tick 마다 시프트하므로 필요한 건 절대 정확도가 아니라 **몇 초/3 m 안의
+국소 정합성**이다. 학습의 odometry 노이즈 모델도 증분에 걸려 있다
+(`Δ_meas = Δ_true·(1+b+bias)+n`, b~N(0,0.02), bias~U(±0.03), walk 0.005 m). MuJoCo 에서는
+브리지가 GT(`framepos`, imu site)를 `rt/sportmodestate` 로 흘렸을 뿐 추정기가 없었고,
+실기의 그 토픽은 sport 서비스 것이라 저수준 제어(`lowcmd`) 중 계속 온다는 보장이 없다.
+
+**구현** — `unitree_rl_lab/deploy/parkour/em_sidecar/leg_odometry.py` (순수 numpy, 500 Hz 에서
+step 550 µs). 접촉 발을 정지점으로 보고
+
+    v_base,w = −R (ṗ_foot + ω × p_foot) + r · (ω_foot,w × ẑ)
+
+를 발 평균해 적분한다. FK 는 기존 `Go2Kinematics`(IsaacLab 실측 역산), ṗ 는 시간 차분
+(Jacobian 불필요). 사이드카 `--odom {sport,leg}`, `--leg-shadow`(지도는 GT, 추정기는 기록만),
+`tools/odom_check.py`, 게이트 `tests/test_leg_odometry.py`.
+
+**게이트 — IsaacLab 트레이스(20 s, `contract/long_trace.npz`)의 `root_pos_w` 로 판정.**
+
+| | 보정 없음 | 발 구름 보정 r=2.34 cm |
+|---|---|---|
+| 에피소드 0 (램프) scale | −8.4 % | **−0.05 %** (힘가중) / −1.7 % (균등+저역통과) |
+| 에피소드 1 (평지) scale | −9.1 % | **−1.2 %** / −2.2 % |
+| 전체 드리프트 xy (9.5 s) | 56 cm | 3.1 cm / 10.9 cm |
+| 3.2 m 창 p95 | 34 cm | 13 cm / 19 cm |
+
+발 링크 원점은 구 중심이고 정지한 것은 접촉점이다 — 종아리가 회전하면 구가 굴러
+중심이 r·Δθ 앞으로 가므로 보정 없이는 −9 % 로 짧게 잰다. 편향을 0 으로 만드는 반지름
+**2.34 cm 가 `dump_stand_height.py` 로 독립 실측한 IsaacLab 발 반지름과 정확히 같다**
+(MJCF 의 2.2 cm 가 아니다). 최종 기본값(균등 평균 + 힘 저역통과 τ 6 ms)은 0.1 s 증분
+기준에서 에피소드 0 이 0.92 cm(한계 0.875)로 아슬아슬하게 NG — 힘가중이면 통과하지만
+MuJoCo 에서 해롭다(아래).
+
+**MuJoCo 라이브에서 배운 것 (전부 실측, 순서대로 고침).**
+
+| 증상 | 원인 | 조치 |
+|---|---|---|
+| 엎드린 7 s 에 0.8 m 드리프트 | 발 하중 없음 → 가속도계 적분 → 그 속도를 무기한 유지 | 무접촉 0.15 s 후 속도 0. 가속도계·비행 판별 제거(접촉 채터로 |f|<5 오판) |
+| 보행 중 z −2~−4 m/s 스파이크 | 착지 충격 순간이 "정지 발"로 잡힘 | 접촉 20 ms 안착 후 신뢰 |
+| leg 분기 0.7 % (위치가 안 늘어남) | 접촉력이 `74, 59, 0, 10, 71, …` 8 ms 주기로 튐 | 힘 저역통과 τ 6 ms (시간 디바운스는 막 뗀 발을 붙잡아 z −7 cm/s, 진행 −2~−11 % 편향 → 폐기) |
+| 힘 가중 시 xy 154 / z 86 cm 드리프트 | 큰 힘 = 발이 튀는 순간 → 움직이는 순간을 골라 뽑음 | 균등 평균 (26 / 0.4 cm) |
+| GT 대비 발이 60 cm/s "미끄러짐" | 기록 정렬 오류 (sportmodestate 수신 지터) | 브리지가 `stamp` 에 sim 시각을 채우고 오프라인 보간 |
+| 위 채터의 근원 | **발 접촉 `solref 0.005` 가 dt 2 ms 에 비해 너무 뻣뻣** — 순수 MuJoCo 기립 실험: 힘<2N 표본 30 %, **정지 상태에서 발 크리프 6.0 cm/s** (보행 속도의 9 %) | `solref (0.010, ζ=2)` → 채터 0 %, 크리프 0.01 cm/s, 파묻힘 0~0.5 % 유지 |
+
+`solref 0.005` 는 지난 Phase 4 에서 발 파묻힘을 없애려 넣은 값이고, **Phase 4 의 성적
+(6/10 정상 도달, 0 우회)은 채터하는 접촉 위에서 측정된 것**이다. 정책의 접촉 관측
+(obs 49:53, 2 N 임계)에도 그 채터가 들어갔다. 이 발견은 브리지 스냅샷 수정
+(`capture_state`)과 함께 왔다 — 처음엔 찢어진 읽기로 봤으나 스냅샷 후에도 패턴이 남아
+물리임이 확정됐다.
+
+**정상 보행 위 추정기 성능 (그림자 모드, solref 0.01 ζ2, 완주 실행 20.7 s / 15.8 m).**
+
+| 구간 | 경로 | 진행방향 오차 | z |
+|---|---|---|---|
+| 평지 | 1.9 m | **−1.2 %** | −6 cm |
+| 램프 (오르내림 포함) | 10.9 m | −7.7 % | −19 cm |
+| 고원 | 3.0 m | −5.4 % | +15 cm |
+
+평지에서는 하중 실린 발의 월드 속도가 0.0 cm/s(p90 0.8)로 **완전히 정지** — 추정기가
+맞다. 램프에서는 발이 실제로 중앙값 1~3 cm/s, 경량 접촉은 p90 35~85 cm/s 로
+**미끄러진다** (hfield 프리즘 경사면 위의 구 접촉; IsaacLab 삼각망에선 안 그런다).
+남은 −7.7 % 는 odometry 가 아니라 물리이고, 정책도 같은 미끄러짐을 겪는다.
+
+**폐루프 (leg 모드) — 미결.** leg 모드 4회 0/4 통과(전부 우회), 추정 scale −20~−53 %.
+그림자 −6 % 였던 추정기가 폐루프에서 훨씬 나빠지는 되먹임(오차 → 지도 뒤틀림 →
+느리고 옆으로 걷기 → 추정 악화)이 있다. 그런데 정책의 odometry 내성을 sport(GT) 지도에
+합성 오차를 얹어 재 보니 — ×2(bias −6 %, walk 1 cm) 0/3, ×4(−12 %, 2 cm) 1/3 — **오차
+없는 sport 도 1/4 완주·우회 2/4** 였다. 즉 지금 우회율을 지배하는 것은 odometry 가 아니라
+접촉 모델 변경(0.005 → 0.01 ζ2)이다. 새 접촉 모델의 정책 성적 n=10: **완주 2/10 (0.714 m/s ×2), 램프 정상(≥35 cm) 도달 5/10, 우회 8/10** — 기준선(solref 0.005: 완주 3/10, 정상 6/10, 우회 0/10)보다 나쁘다. 물리적으로 깨끗한 접촉이 정책에는 오히려 불리하다. 배포 기본값은 0.005 로 되돌리고 (0.01, ζ2) 는 xml 주석에 남긴다. 이 정책이 채터하는 접촉에 맞춰진 것인지, hfield 경사 미끄러짐이 원인인지는 미결이며, 폐루프 leg 모드 평가는 정책이 GT 로도 안정적으로 걷는 접촉 모델이 정해진 뒤에야 의미가 있다.
+
+**실기로 갈 때.** `SidecarCfg.odom_source="leg"`, `odom_offset_in_base` 미적용(추정이 base
+원점), `leg_seed_from_sport=False`(0 에서 시작, 지도는 상대). `foot_force` 는 원시 정수라
+`contact_force_thr` 재보정. `ReleaseMode()` 뒤 `sportmodestate` 가 계속 오는지는 10 분
+테스트로 확인하되, 이 추정기는 그것과 무관하게 돈다.
+
 ---
 
 ## 4. 함정 목록 (실패 원인 후보, 체감 위험 순)
@@ -641,7 +720,7 @@ roll 이 0.41 rad 로 튄다).
 
 | 항목 | 현재 (sim) | 실기에서 필요한 것 |
 |---|---|---|
-| **odometry (xy, yaw, z)** | GT + 주입 drift | **최대 리스크.** Go2 sport-mode odometry, LiDAR-inertial odometry(FAST-LIO 계열), 또는 leg+IMU. 학습이 가정한 drift 크기(scale bias ±3%, gyro bias 0.01~0.05 deg/s) 안에 들어오는지 실측 필요 |
+| **odometry (xy, z)** | GT(sport) 또는 **자체 leg+IMU (`--odom leg`, Phase 6)** | 자체 추정기는 IsaacLab 트레이스에서 scale −1~−2 %, MuJoCo 평지 −1.2 %, 램프 −7.7 %(물리적 미끄러짐). 실기 `foot_force` 임계 재보정, `leg_seed_from_sport=False`. yaw 는 lowstate IMU 라 무관 |
 | 점군 | IsaacLab raycast | `unilidar_sdk2` → 센서 프레임 점군. 마운트 extrinsic 실측 후 `GO2_LIDAR_CFG.offset` 교체 |
 | base 선속도 | estimator(prop) | 그대로 사용 가능 (설계상 이미 실기 조건) |
 | 발 접촉 | 접촉력 2N 임계 | LowState `foot_force` 로 임계 재보정 |
