@@ -6,7 +6,7 @@
 EM student(EMDistillation) 는 play.py 가 아예 "JIT/ONNX export 는 지원하지 않는다"
 고 찍고 넘어간다. 배포에는 이게 있어야 한다.
 
-시그니처 (docs/mujoco_sim2sim_plan.md §6.1)
+시그니처
 -------------------------------------------
     inputs : prop(1,53)  scan(1,132)  hist(1,530)
     output : actions(1,12)
@@ -31,9 +31,8 @@ Isaac Sim 이 필요해진다. 가중치 shape 만으로 거의 모든 치수가
 체크포인트에서 읽고, 복원한 값들끼리 아귀가 맞는지 assert 로 검증한다.
 
 다만 **weights 로 복원 불가능한 것이 둘** 있다 — 활성함수와 tanh_encoder_output.
-둘 다 CLI 플래그로 두고 기본값을 학습 cfg 값(elu / False)으로 뒀다. 이 둘이 틀리면
-여기 검증은 통과하고 골든 트레이스 대조에서만 잡힌다. 그래서 export 만으로 끝내지
-말고 반드시 deploy/tools/check_onnx_against_trace.py 까지 돌릴 것.
+둘 다 CLI 플래그로 두고 기본값을 학습 cfg 값(elu / False)으로 뒀다.
+내장 검증은 이 설정이 학습 때와 같은지 확인하지 못하므로 학습 설정과 맞춰야 한다.
 
 실행 (Isaac Sim 불필요 — torch + rsl_rl 만 있으면 된다)
 -------------------------------------------------------
@@ -281,7 +280,6 @@ def main():
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
     print(f"메타 저장: {meta_path}")
-    print("\n다음: env_sim2real 에서 deploy/tools/check_onnx_against_trace.py 로 검증할 것.")
 
 
 if __name__ == "__main__":

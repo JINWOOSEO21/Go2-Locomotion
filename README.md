@@ -1,173 +1,156 @@
 # Isaaclab_Parkour
 
-Isaaclab based Parkour locomotion 
+Parkour locomotion for the Unitree Go2 in IsaacLab, based on [Extreme-Parkour](https://extreme-parkour.github.io/).
 
-Base model: [Extreme-Parkour](https://extreme-parkour.github.io/)
+## Policy versions
 
-## trained_v1.3과 1.0, 1.1, 1.2의 차이
+The main distinction between `trained_v1.1` and `trained_v1.3` is how the policy is trained and how its inputs are provided.
 
-- v1.0/v1.1: depth camera(전방 20° 하향) student. v1.2: depth camera 45° 하향(tilted).
-- **v1.3**: depth camera 제거 — **L1 LiDAR + elevation_mapping_cupy**로 elevation map을
-  만들고(self-hit 캡슐 필터, batched 커널) teacher scandots 격자(12×11)로 샘플해
-  teacher scan_encoder(초기값)에 입력. 태스크: `Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-v0`.
-  상세: `docs/emcupy_student_plan.md`, 검증: `docs/emcupy_verification_checklist.md`.
+| Version | Policy architecture and training | Perception and direction inputs |
+| --- | --- | --- |
+| `trained_v1.0` | Baseline teacher–student distillation. | Depth camera tilted 20° downward. |
+| `trained_v1.1` | Teacher–student distillation with oracle points also supplied to the student. | Depth camera tilted 20° downward; the intended direction of travel is provided through oracle points. |
+| `trained_v1.2` | Depth-camera variant of the student policy. | Depth camera tilted 45° downward. |
+| `trained_v1.3` | Retains the pretrained teacher policy architecture and adapts its inputs, rather than introducing a separate teacher–student architecture. | L1 LiDAR point clouds are converted into an elevation map; input noise is progressively increased during training. |
 
-v1.3에서 추가로 바뀐 **정책 입출력 규약 2가지** (이전 버전 체크포인트와 비호환):
+### trained_v1.1: Distillation with oracle direction inputs
 
-1. **지형 타입 플래그 상수화** — obs의 flat/non-flat 구분 성분(prop 11/12번)을
-   지형과 무관하게 항상 non-flat=1, flat=0으로 고정. 실기에는 "지금 flat이다"를
-   알려줄 오라클이 없어 flat 감지 후 모드 전환을 재현할 수 없으므로, 정책이 이
-   신호에 의존하지 않게 했다 (목표가 파쿠르식 동적 모드 전환이 아니라 험지
-   robust 보행이기 때문). train/play/evaluation/demo 모두 적용.
-2. **priv_explicit을 GT → estimator 추정값으로** — student(EM) 경로에서 obs의
-   priv_explicit 자리(base 선속도 등 9차원)에 GT 대신 frozen estimator(teacher
-   단계에서 학습됨)의 추정값을 넣는다. 실기에서 GT 선속도를 알 수 없으므로 배포
-   조건과 일치시킨 것. teacher label 생성은 GT 유지, learn_em/play/evaluation 적용.
+`trained_v1.1` keeps the teacher–student structure and the same distillation method as the original approach. The key change is that **oracle points are provided to the student as inputs as well**. These points specify the robot's intended direction of travel, so the student does not also have to predict which direction the robot should move next.
 
-https://github.com/user-attachments/assets/aa9f7ece-83c1-404f-be50-6ae6a3ba3530
+The student therefore learns locomotion through distillation while receiving the direction information explicitly.
 
+### trained_v1.3: Input adaptation with the teacher policy architecture
 
-## How to install 
+**`trained_v1.3` does not use a separate teacher–student policy architecture.** It starts from a teacher policy already trained with ground-truth (GT) scandots and preserves that policy's network architecture while changing the terrain input:
 
+1. Start with the policy trained on GT scandots.
+2. Collect point clouds with the L1 LiDAR and construct an elevation map using `elevation_mapping_cupy`.
+3. Sample the elevation map on the same 12 × 11 grid used for the teacher's scandots and feed these samples into the existing scan encoder.
+4. Continue training with progressively stronger noise on the elevation-map input so the policy can keep moving under increasingly noisy terrain observations.
+
+The depth camera is removed in this version. The focus is on adapting the existing policy to LiDAR-derived terrain observations, rather than training a separate depth-camera student to reproduce a teacher.
+
+The registered task retains the name `Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-v0`. The current training code also reuses the `EMDistillation` harness and GT teacher action targets for supervision. These implementation details describe the optimization path; the adapted policy retains the teacher's architecture instead of using a distinct student architecture.
+
+### trained_v1.3 observation changes
+
+Two additional observation changes affect compatibility with earlier checkpoints:
+
+- **Fixed terrain-type flags:** the flat/non-flat components at proprioceptive observation indices 11 and 12 are fixed to `non-flat=1` and `flat=0`, regardless of terrain. This removes dependence on an oracle terrain-type signal and targets robust locomotion over rough terrain. The convention applies to training, playback, evaluation, and demos.
+- **Estimated explicit privileged observations:** the elevation-map policy receives the frozen estimator's predictions in the nine-dimensional `priv_explicit` slot, including base linear velocity, in place of GT values. The estimator comes from teacher training. This aligns the policy's observations with deployment conditions, where GT base velocity is unavailable.
+
+## Installation
+
+Run the following from your IsaacLab directory in an environment configured for IsaacLab:
+
+```bash
+git clone https://github.com/JINWOOSEO21/Isaaclab_Parkour.git
+cd Isaaclab_Parkour
+pip3 install -e .
+pip3 install -e ./parkour_tasks
 ```
-cd IsaacLab ## going to IsaacLab
-```
 
-```
-https://github.com/CAI23sbP/Isaaclab_Parkour.git ## cloning this repo
-```
+Run the commands below from the `Isaaclab_Parkour` repository root.
 
-```
-cd Isaaclab_Parkour && pip3 install -e .
-```
+## Training
 
-```
-cd parkour_tasks && pip3 install -e .
-```
+### Teacher policy
 
-## How to train policies
-
-### 1.1. Training Teacher Policy
-
-```
+```bash
 python scripts/rsl_rl/train.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-v0 --seed 1 --headless
 ```
 
-### 1.2. Training Student Policy
+### Depth-camera student policy
 
-```
+This task uses the teacher–student distillation workflow.
+
+```bash
 python scripts/rsl_rl/train.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-v0 --seed 1 --headless
 ```
 
-## How to play your policy 
+### Elevation-map policy (trained_v1.3)
 
-### 2.1. Pretrained Teacher Policy 
+This task adapts the pretrained teacher architecture to elevation-map inputs. Configure the source teacher checkpoint before training.
 
-Download Teacher Policy by this [link](https://drive.google.com/file/d/1JtGzwkBixDHUWD_npz2Codc82tsaec_w/view?usp=sharing)
-
-
-### 2.2. Playing Teacher Policy 
-
+```bash
+python scripts/rsl_rl/train.py --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-v0 --seed 1 --headless
 ```
+
+## Playback and evaluation
+
+### Teacher policy
+
+[Download the pretrained teacher policy](https://drive.google.com/file/d/1JtGzwkBixDHUWD_npz2Codc82tsaec_w/view?usp=sharing).
+
+```bash
 python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0 --num_envs 16
+python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Eval-v0
 ```
 
-[Screencast from 2025년 08월 16일 12시 43분 38초.webm](https://github.com/user-attachments/assets/ff1f58db-2439-449c-b596-5a047c526f1f)
+[Teacher policy demo](https://github.com/user-attachments/assets/ff1f58db-2439-449c-b596-5a047c526f1f)
 
+### Depth-camera student policy
 
-### 2.3. Evaluation Teacher Policy
+[Download the pretrained student policy](https://drive.google.com/file/d/1qter_3JZgbBcpUnTmTrexKnle7sUpDVe/view?usp=sharing).
 
-```
-python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Eval-v0 
-```
-
-### 3.1 Pretrained Student Policy 
-
-Download Student Policy by this [link](https://drive.google.com/file/d/1qter_3JZgbBcpUnTmTrexKnle7sUpDVe/view?usp=sharing)
-
-### 3.2. Playing Student Policy 
-
-```
+```bash
 python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Play-v0 --num_envs 16
+python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Eval-v0
 ```
 
 https://github.com/user-attachments/assets/82a5cecb-ffbf-4a46-8504-79188a147c40
 
+### Elevation-map policy (trained_v1.3)
 
-### 3.3. Evaluation Student Policy
-
-```
-python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Eval-v0 
-```
-
-## How to deploy in IsaacLab
-
-[Screencast from 2025년 08월 20일 18시 55분 01초.webm](https://github.com/user-attachments/assets/4fb1ba4b-1780-49b0-a739-bff0b95d9b66)
-
-### 4.1. Deployment Teacher Policy 
-
-```
-python scripts/rsl_rl/demo.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0 
+```bash
+python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Play-v0 --num_envs 16
+python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Eval-v0
 ```
 
+## IsaacLab demos
 
-### 4.2. Deployment Student Policy 
-
-```
-python scripts/rsl_rl/demo.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Play-v0 
-```
-
-## Testing your modules
-
-```
-cd parkour_test/ ## You can test your modules in here
+```bash
+python scripts/rsl_rl/demo.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0
+python scripts/rsl_rl/demo.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Play-v0
 ```
 
-## Visualize Control (ParkourViewportCameraController)
+[Go2 demo in IsaacLab](https://github.com/user-attachments/assets/4fb1ba4b-1780-49b0-a739-bff0b95d9b66)
 
-```
-press 1 or 2: Going to environment
+### Viewport controls
 
-press 8: camera forward    
+The `ParkourViewportCameraController` supports the following controls:
 
-press 4: camera leftward   
+| Key | Action |
+| --- | --- |
+| `1` / `2` | Select an environment to view. |
+| `8` | Move the camera forward. |
+| `4` | Move the camera left. |
+| `6` | Move the camera right. |
+| `5` | Move the camera backward. |
+| `0` | Enable the free camera and mouse control. |
+| `1` | Return to the default camera mode. |
 
-press 6: camera rightward   
+## Module tests
 
-press 5: camera backward
+Module test scripts are available in `parkour_test/`.
 
-press 0: Use free camera (can use mouse)
+## Sim-to-sim and sim-to-real deployment
 
-press 1: Not use free camera (default)
-```
+See [go2_parkour_deploy](https://github.com/CAI23sbP/go2_parkour_deploy) for the deployment project.
 
+- [x] Teacher training code.
+- [x] Distillation training code.
+- [x] IsaacLab policy demos, based on the [IsaacLab showroom example](https://isaac-sim.github.io/IsaacLab/main/source/overview/showroom.html).
+- [x] Sim-to-sim deployment from IsaacLab to MuJoCo.
+- [ ] Sim-to-real deployment on the physical robot.
 
-## How to Deploy sim2sim or sim2real
+## Project video
 
-it is a future work, i will open this repo as soon as possible
-
-* [x] sim2sim: isaaclab to mujoco
-
-* [ ] sim2real: isaaclab to real world
-
-see this [repo](https://github.com/CAI23sbP/go2_parkour_deploy)
-
-
-### TODO list
-
-* [x] Opening code for training Teacher model  
-
-* [x] Opening code for training Distillation 
-
-* [x] Opening code for deploying policy in IsaacLab by demo: code refer [site](https://isaac-sim.github.io/IsaacLab/main/source/overview/showroom.html)  
-
-* [x] Opening code for deploying policy by sim2sim (mujoco)
-
-* [ ] Opening code for deploying policy in real world 
+https://github.com/user-attachments/assets/aa9f7ece-83c1-404f-be50-6ae6a3ba3530
 
 ## Citation
 
-If you use this code for your research, you **must** cite the following paper:
+If you use this code for your research, you **must** cite the following papers:
 
 ```
 @article{cheng2023parkour,
@@ -203,8 +186,6 @@ explicit citation of the following repository:
 https://github.com/CAI23sbP/Isaaclab_Parkour
 ```
 
-## contact us 
+## Contact
 
-```
-sbp0783@hanyang.ac.kr
-```
+[sbp0783@hanyang.ac.kr](mailto:sbp0783@hanyang.ac.kr)

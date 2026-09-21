@@ -27,11 +27,11 @@ OBJ 는 시각 확인·검증용으로만 남긴다.
 보는 바로 그 삼각망**(= 간략화 이후)을 재현한다. 격자 간격 기본값은
 horizontal_scale/2 = 0.05m 로, slope_threshold 가 만든 반칸 수직면을 담을 수 있다.
 
-지형이 트레이스와 같은 것이어야 한다
+지형 재현을 위한 시드 고정
 ------------------------------------
 TerrainGeneratorCfg.seed 기본값이 None 이라 지형 난수는 **전역 numpy 시드**를 따른다
 (noise_range 가 셀마다 난수를 쓴다). 그래서 생성기만 따로 만들지 않고
-dump_golden_trace.py 와 **같은 방식으로 env 를 만들어** 그 안의 생성기를 꺼낸다.
+학습/재생과 같은 방식으로 env 를 만들어 그 안의 생성기를 꺼낸다.
 같은 --seed 를 주면 같은 지형이 나온다.
 
 검증
@@ -201,7 +201,7 @@ def main():
 
 
 if __name__ == "__main__":
-    # dump_golden_trace.py 와 같은 이유로 예외를 먼저 찍는다 (§4 함정 17).
+    # 시뮬레이터 종료 전에 예외를 출력해 오류 원인을 남긴다.
     import traceback
 
     failed = False

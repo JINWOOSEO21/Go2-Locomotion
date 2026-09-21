@@ -1,7 +1,7 @@
 # Go2 파쿠르 정책 배포 계약 — 관절 순서 실측치
 #
-# 전체 계약(obs 753 레이아웃 등)은 docs/mujoco_sim2sim_plan.md 를 본다.
-# 이 파일은 그중 "순서에 의존해서 조용히 망가지는" 값만 못박은 것이다.
+# 이 파일은 관절 순서와 제어 설정을 정의한다.
+# ONNX 입력 규약은 deploy/tools/export_em_student_onnx.py 를 본다.
 #
 # 실측 방법 — 재현:
 #   env_isaaclab:  python deploy/tools/dump_isaaclab_joint_order.py --out /tmp/il.json
