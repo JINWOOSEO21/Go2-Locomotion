@@ -24,7 +24,7 @@ env 별 초기 모터 위상만 랜덤이다.
 (sys/com_rotation_period, theta/ksi_angle)이 준다. 실기 확보 시 교체할 것 [실측 반영].
 
 self-filter 프리미티브 테이블(GO2_SELF_FILTER_CAPSULES)도 여기 둔다 — 센서와 함께
-"로봇 기하"라는 한 가지 지식을 이루기 때문이다. 소비자는 [A] 파이프라인(scripts/lidar_sim).
+"로봇 기하"라는 한 가지 지식을 이루기 때문이다.
 """
 from __future__ import annotations
 

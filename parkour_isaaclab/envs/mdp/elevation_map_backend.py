@@ -275,9 +275,8 @@ class ElevationMapBackend:
 # 위 ElevationMapBackend(인스턴스 루프)는 tick 당 인스턴스 x 커널 ~8회의 런치
 # 오버헤드가 지배해 192 env 실측 250ms/tick 이었다. 아래는 em_cupy 의 커널
 # 소스(MIT, Takahiro Miki)를 env 배치 차원이 있는 형태로 수정해 tick 당 커널
-# 몇 회로 줄인 것이다. 수식/셀 인덱싱/upper_bound 로직은 stock 과 동일하며,
-# 회귀 테스트(scripts/emcupy_check/regression_batched.py)가 동일 입력 → 동일
-# 출력을 검증한다. stock 과 맞추기 위한 재현 사항:
+# 몇 회로 줄인 것이다. 수식/셀 인덱싱/upper_bound 로직은 stock 과 동일하다.
+# stock 과 맞추기 위한 재현 사항:
 #  - error_counting 커널 포함 (newmap 의 점 카운트 레이어 3,4 를 add_points 의
 #    wall-sharpening/cleanup 분기가 읽는다 — 드리프트 보정이 꺼져 있어도 필요)
 #  - traversability CNN 스텁의 부작용(map layer3 내부=0) 재현 — 다음 tick 의

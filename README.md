@@ -8,9 +8,7 @@ The main distinction between `trained_v1.1` and `trained_v1.3` is how the policy
 
 | Version | Policy architecture and training | Perception and direction inputs |
 | --- | --- | --- |
-| `trained_v1.0` | Baseline teacher–student distillation. | Depth camera tilted 20° downward. |
 | `trained_v1.1` | Teacher–student distillation with oracle points also supplied to the student. | Depth camera tilted 20° downward; the intended direction of travel is provided through oracle points. |
-| `trained_v1.2` | Depth-camera variant of the student policy. | Depth camera tilted 45° downward. |
 | `trained_v1.3` | Retains the pretrained teacher policy architecture and adapts its inputs, rather than introducing a separate teacher–student architecture. | L1 LiDAR point clouds are converted into an elevation map; input noise is progressively increased during training. |
 
 ### trained_v1.1: Distillation with oracle direction inputs

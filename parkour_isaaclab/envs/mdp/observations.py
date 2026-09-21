@@ -241,7 +241,7 @@ class elevation_map_scan(ManagerTermBase):
         self._odom_needs_init = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
         self._resample_yaw_bias(torch.arange(self.num_envs, device=self.device))
         self._resample_pos_scale_bias(torch.arange(self.num_envs, device=self.device))
-        # 검증 스크립트(scripts/emcupy_check)가 valid_frac 등에 접근할 수 있게 노출
+        # 외부에서 valid_frac 등 elevation-map 상태에 접근할 수 있게 노출
         env.em_scan_term = self
 
     def reset(self, env_ids: Sequence[int] | None = None) -> None:
