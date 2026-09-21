@@ -126,6 +126,7 @@ class UnitreeGo2TeacherParkourEnvCfg_PLAY(UnitreeGo2TeacherParkourEnvCfg_EVAL):
             self.scene.terrain.terrain_generator.difficulty_range = (0.7, 0.7)
             self.scene.terrain.terrain_generator.num_rows = 1
         self.events.push_by_setting_velocity = None
+        self.events.push_angular_velocity = None
         # 학습에 실제로 쓰는 3종(사다리꼴 램프/계단 + flat)만 균등하게 본다.
         # one_col_per_terrain=True 가 num_cols 를 활성 지형 수(=3)에 맞춰
         # 커리큘럼 컬럼→지형 매핑을 1:1 로 떨어뜨린다. 부모(EVAL)가 잡아 둔

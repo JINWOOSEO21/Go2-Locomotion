@@ -94,6 +94,7 @@ class UnitreeGo2EMStudentParkourEnvCfg_PLAY(UnitreeGo2EMStudentParkourEnvCfg_EVA
             self.scene.terrain.terrain_generator.num_rows = 1
             self.scene.terrain.terrain_generator.size = (24.0, 4.0)
         self.events.push_by_setting_velocity = None
+        self.events.push_angular_velocity = None
         apply_terrain_preset(
             self.scene.terrain.terrain_generator, "trapezoid_only",
             one_col_per_terrain=True,

@@ -22,6 +22,21 @@ from .distillation_with_extractor import DistillationWithExtractor, EMDistillati
 from copy import copy
 import warnings
 
+
+_DISTURBANCE_SCALES = (0.2, 0.4, 0.6, 0.8, 1.0)
+
+
+def _disturbance_scale_for_progress(completed_iterations: int, total_iterations: int) -> float:
+    """Return the five-stage disturbance scale for the active learn call."""
+    if total_iterations <= 0:
+        raise ValueError("total_iterations must be positive")
+    stage = min(
+        len(_DISTURBANCE_SCALES) - 1,
+        completed_iterations * len(_DISTURBANCE_SCALES) // total_iterations,
+    )
+    return _DISTURBANCE_SCALES[stage]
+
+
 class OnPolicyRunnerWithExtractor(OnPolicyRunner):
     def __init__(self, env: VecEnv, train_cfg: dict, log_dir: str | None = None, device="cpu"):
         self.cfg = train_cfg
@@ -157,6 +172,9 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         self.tot_timesteps = 0
         self.tot_time = 0
         self.current_learning_iteration = 0
+        self._disturbance_schedule_total_iterations = None
+        self._disturbance_schedule_completed_iterations = 0
+        self._disturbance_schedule_resume_pending = False
         self.git_status_repos = [rsl_rl.__file__]
 
     def learn_rl(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):  # noqa: C901
@@ -190,6 +208,10 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                 self.env.episode_length_buf, high=int(self.env.max_episode_length)
             )
 
+        # The curriculum is local to this learn() call. Loading a v1.4 checkpoint
+        # restores its saved position; older teacher checkpoints start at stage 1.
+        self._begin_disturbance_schedule(num_learning_iterations)
+
         # start learning
         obs, extras = self.env.get_observations()
         privileged_obs = extras["observations"].get(self.privileged_obs_type, obs)
@@ -221,6 +243,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         start_iter = self.current_learning_iteration
         tot_iter = start_iter + num_learning_iterations
         for it in range(start_iter, tot_iter):
+            self._apply_disturbance_schedule()
             start = time.time()
             hist_encoding = it % self.dagger_update_freq == 0
 
@@ -294,10 +317,12 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             stop = time.time()
             learn_time = stop - start
             self.current_learning_iteration = it
+            self._advance_disturbance_schedule()
             # log info
             if self.log_dir is not None and not self.disable_logs:
                 # Log information
                 self.log(locals())
+                self.writer.add_scalar("Disturbance/scale", self.env.unwrapped.disturbance_scale, it)
                 # Save model
                 if it % self.save_interval == 0:
                     self.save(os.path.join(self.log_dir, f"model_{it}.pt"))
@@ -344,6 +369,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             else:
                 raise ValueError("Logger type not found. Please choose 'neptune', 'wandb' or 'tensorboard'.")
 
+        self._begin_disturbance_schedule(num_learning_iterations)
         obs, extras = self.env.get_observations()
         additional_obs = {}
         additional_obs["depth_camera"] = extras["observations"]['depth_camera'].to(self.device)
@@ -375,6 +401,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         tot_iter = self.current_learning_iteration + num_learning_iterations
         num_pretrain_iter = 0
         for it in range(start_iter, tot_iter):
+            self._apply_disturbance_schedule()
             start = time.time()
             actions_buffer = []
             for _ in range(self.depth_encoder_cfg['num_steps_per_env']):
@@ -427,6 +454,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             self.alg.depth_encoder.detach_hidden_states()
 
             self.current_learning_iteration = it
+            self._advance_disturbance_schedule()
             # log info
             if self.log_dir is not None and not self.disable_logs:
                 # Log information
@@ -483,6 +511,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             else:
                 raise ValueError("Logger type not found. Please choose 'neptune', 'wandb' or 'tensorboard'.")
 
+        self._begin_disturbance_schedule(num_learning_iterations)
         obs, extras = self.env.get_observations()
         em_scan = extras["observations"]["em_scan"].to(self.device)
         obs = obs.to(self.device)
@@ -504,6 +533,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         start_iter = self.current_learning_iteration
         tot_iter = self.current_learning_iteration + num_learning_iterations
         for it in range(start_iter, tot_iter):
+            self._apply_disturbance_schedule()
             start = time.time()
             actions_buffer = []
             for _ in range(self.em_cfg['num_steps_per_env']):
@@ -545,6 +575,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             learn_time = stop - start
 
             self.current_learning_iteration = it
+            self._advance_disturbance_schedule()
             if self.log_dir is not None and not self.disable_logs:
                 self.log_vision(locals())
                 if it % self.save_interval == 0:
@@ -586,6 +617,40 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         self.alg.depth_encoder.detach_hidden_states()
         return obs, additional_obs
 
+    def _begin_disturbance_schedule(self, num_learning_iterations: int):
+        """Start or resume the five-stage curriculum used by one learn() call.
+
+        ``num_learning_iterations`` is the number of additional iterations passed
+        to this invocation. It deliberately does not use the absolute checkpoint
+        iteration, so an old pretrained teacher begins at scale 0.2. Checkpoints
+        produced during this curriculum persist the original total and completed
+        counts, allowing an interrupted v1.4 run to continue at the same stage.
+        """
+        if self._disturbance_schedule_resume_pending:
+            self._disturbance_schedule_resume_pending = False
+        else:
+            self._disturbance_schedule_total_iterations = max(1, int(num_learning_iterations))
+            self._disturbance_schedule_completed_iterations = 0
+        self._apply_disturbance_schedule()
+
+    def _apply_disturbance_schedule(self):
+        total = self._disturbance_schedule_total_iterations
+        if total is None:
+            return
+        scale = _disturbance_scale_for_progress(
+            self._disturbance_schedule_completed_iterations,
+            total,
+        )
+        self.env.unwrapped.disturbance_scale = scale
+
+    def _advance_disturbance_schedule(self):
+        total = self._disturbance_schedule_total_iterations
+        if total is not None:
+            self._disturbance_schedule_completed_iterations = min(
+                self._disturbance_schedule_completed_iterations + 1,
+                total,
+            )
+
     def log_vision(self, locs, width=80, pad=35):
         
         collection_size = self.num_steps_per_env * self.env.num_envs * self.gpu_world_size
@@ -626,6 +691,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         self.writer.add_scalar("Perf/total_fps", fps, locs["it"])
         self.writer.add_scalar("Perf/collection time", locs["collection_time"], locs["it"])
         self.writer.add_scalar("Perf/learning_time", locs["learn_time"], locs["it"])
+        self.writer.add_scalar("Disturbance/scale", self.env.unwrapped.disturbance_scale, locs["it"])
 
         if len(locs["lenbuffer"]) > 0:
             self.writer.add_scalar("Train/mean_episode_length", statistics.mean(locs["lenbuffer"]), locs["it"])
@@ -712,6 +778,11 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         alg_counter = getattr(self.alg, "counter", None)
         if alg_counter is not None:
             saved_dict["alg_counter"] = int(alg_counter)
+        if self._disturbance_schedule_total_iterations is not None:
+            saved_dict["disturbance_schedule"] = {
+                "total_iterations": self._disturbance_schedule_total_iterations,
+                "completed_iterations": self._disturbance_schedule_completed_iterations,
+            }
         # save model
         torch.save(saved_dict, path)
 
@@ -727,6 +798,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         그 분포를 덮어써 버린다.
         """
         loaded_dict = torch.load(path, weights_only=False)
+        starts_distillation_from_teacher = False
         resumed_training = self.alg.policy.load_state_dict(loaded_dict["model_state_dict"])
         self.alg.estimator.load_state_dict(loaded_dict['estimator_state_dict'])
         if self.alg.rnd:
@@ -776,6 +848,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                 #  아래 resumed_training 분기만으로는 이걸 막을 수 없다.)
                 self.current_learning_iteration = 0
                 loaded_dict["iter"] = 0
+                starts_distillation_from_teacher = True
 
         if load_optimizer and resumed_training:
             # -- algorithm optimizer
@@ -803,10 +876,34 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         if resumed_training:
             self.current_learning_iteration = loaded_dict["iter"]
             self._restore_alg_counter(loaded_dict)
+        self._restore_disturbance_schedule(loaded_dict, starts_distillation_from_teacher)
         # -- 지형 커리큘럼 복원. 모델 로드가 다 끝난 뒤에 한다.
         if restore_terrain_curriculum:
             self._restore_terrain_levels(loaded_dict.get("terrain_levels"))
         return loaded_dict["infos"]
+
+    def _restore_disturbance_schedule(self, loaded_dict, starts_distillation_from_teacher: bool):
+        """Restore an interrupted schedule, or prepare a fresh one for old/teacher checkpoints."""
+        self._disturbance_schedule_total_iterations = None
+        self._disturbance_schedule_completed_iterations = 0
+        self._disturbance_schedule_resume_pending = False
+        if starts_distillation_from_teacher:
+            return
+        state = loaded_dict.get("disturbance_schedule")
+        if state is None:
+            return
+        try:
+            total = int(state["total_iterations"])
+            completed = int(state["completed_iterations"])
+        except (KeyError, TypeError, ValueError):
+            warnings.warn("invalid disturbance schedule in checkpoint; starting a fresh schedule")
+            return
+        if total <= 0 or completed < 0:
+            warnings.warn("invalid disturbance schedule in checkpoint; starting a fresh schedule")
+            return
+        self._disturbance_schedule_total_iterations = total
+        self._disturbance_schedule_completed_iterations = min(completed, total)
+        self._disturbance_schedule_resume_pending = True
 
     def _restore_alg_counter(self, loaded_dict):
         """PPO 업데이트 카운터를 되살린다. priv_reg_coef_schedual 이 이 값만 본다.

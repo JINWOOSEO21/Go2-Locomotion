@@ -197,6 +197,20 @@ def reward_feet_stumble(
             4 *torch.abs(net_contact_forces[:, :, 2]), dim=1)
     return rew.float()
 
+def reward_feet_slip(
+    env: ParkourManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float = 5.0,
+    ) -> torch.Tensor:
+    """Penalize horizontal foot speed while the foot is in contact."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_forces = contact_sensor.data.net_forces_w_history[:, 0, sensor_cfg.body_ids]
+    contacts = torch.norm(contact_forces, dim=-1) >= threshold
+    foot_vel_xy = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2]
+    return torch.sum(torch.norm(foot_vel_xy, dim=-1) * contacts, dim=1)
+
 def reward_tracking_goal_vel(
     env: ParkourManagerBasedRLEnv, 
     parkour_name : str, 
@@ -222,7 +236,9 @@ def reward_tracking_yaw(
     q = asset.data.root_quat_w
     yaw = torch.atan2(2*(q[:,0]*q[:,3] + q[:,1]*q[:,2]),
                     1 - 2*(q[:,2]**2 + q[:,3]**2))
-    return torch.exp(-torch.abs((parkour_event.target_yaw - yaw)))
+    # Compare headings using the shortest signed angle across the +/-pi boundary.
+    yaw_error = wrap_to_pi(parkour_event.target_yaw - yaw)
+    return torch.exp(-torch.abs(yaw_error))
 
 class reward_delta_torques(ManagerTermBase):
     def __init__(self, cfg: RewardTermCfg, env: ParkourManagerBasedRLEnv):

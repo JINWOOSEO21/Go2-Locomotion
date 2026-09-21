@@ -273,6 +273,15 @@ class TeacherRewardsCfg:
             "parkour_name":'base_parkour'
         },
     )
+    reward_feet_slip = RewTerm(
+        func=rewards.reward_feet_slip,
+        weight=-0.04,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True),
+            "threshold": 5.0,
+        },
+    )
     reward_delta_torques = RewTerm(
         func=rewards.reward_delta_torques, 
         weight=-1.0e-7, 
@@ -317,8 +326,9 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
-            "friction_range": (0.6, 2.0),
-            "num_buckets": 64,
+            "friction_range": (0.25, 2.0),
+            "friction_intervals": ((0.25, 0.5), (0.5, 1.0), (1.0, 2.0)),
+            "num_buckets": 96,
         },
     )
 
@@ -360,9 +370,16 @@ class EventCfg:
     )
     push_by_setting_velocity = EventTerm( # Okay
         func = events.push_by_setting_velocity, 
-        params={'velocity_range':{"x":(-0.5, 0.5), "y":(-0.5, 0.5)}},
+        params={'velocity_range':{"x":(-1.0, 1.0), "y":(-1.0, 1.0)}},
         interval_range_s = (8. ,8. ),
         is_global_time= True, 
+        mode="interval",
+    )
+    push_angular_velocity = EventTerm(
+        func=events.push_by_setting_velocity,
+        params={"velocity_range": {"roll": (-0.5, 0.5), "pitch": (-0.5, 0.5), "yaw": (-0.5, 0.5)}},
+        interval_range_s=(7.0, 7.0),
+        is_global_time=True,
         mode="interval",
     )
     base_external_force_torque = EventTerm(  # Okay

@@ -154,18 +154,30 @@ def randomize_rigid_body_com(
 
 def push_by_setting_velocity(
     env: ManagerBasedEnv,
-    env_ids: torch.Tensor,
+    env_ids: torch.Tensor | None,
     velocity_range: dict[str, tuple[float, float]],
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-):  
+):
+    """Set selected world linear velocities and add body-frame angular kicks.
+
+    Unspecified axes are preserved. Bounds are per component, scaled by the
+    runner's five-stage curriculum; evaluation defaults to full strength.
+    """
     asset: RigidObject | Articulation = env.scene[asset_cfg.name]
-    vel_w = asset.data.root_vel_w[env_ids]
-    range_list = [velocity_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
-    ranges = torch.tensor(range_list, device=asset.device)
-    random_noise = math_utils.sample_uniform(ranges[:, 0], ranges[:, 1], vel_w.shape, device=asset.device)
-    vel_w[:,:2] = random_noise[:,:2]
-    vel_w[:,2:] += random_noise[:,2:]
+    if env_ids is None:
+        env_ids = torch.arange(env.num_envs, device=asset.device)
+    vel_w = asset.data.root_vel_w[env_ids].clone()
+    scale = getattr(env, "disturbance_scale", 1.0)
+    keys = ("x", "y", "z", "roll", "pitch", "yaw")
+    ranges = torch.tensor([velocity_range.get(key, (0.0, 0.0)) for key in keys], device=asset.device)
+    noise = math_utils.sample_uniform(ranges[:, 0], ranges[:, 1], vel_w.shape, device=asset.device) * scale
+    for axis, key in enumerate(keys[:3]):
+        if key in velocity_range:
+            vel_w[:, axis] = noise[:, axis]
+    if any(key in velocity_range for key in keys[3:]):
+        vel_w[:, 3:] += math_utils.quat_apply(asset.data.root_quat_w[env_ids], noise[:, 3:])
     asset.write_root_velocity_to_sim(vel_w, env_ids=env_ids)
+
 
 def random_camera_position(
     env: ManagerBasedEnv,
@@ -249,6 +261,17 @@ class randomize_rigid_body_material(ManagerTermBase):
         range_list = [friction_range, (0,0), restitution_range]
         ranges = torch.tensor(range_list, device="cpu")
         self.material_buckets = math_utils.sample_uniform(ranges[:, 0], ranges[:, 1], (num_buckets, 3), device="cpu")
+        friction_intervals = cfg.params.get("friction_intervals")
+        if friction_intervals is not None:
+            if not friction_intervals or num_buckets % len(friction_intervals):
+                raise ValueError("num_buckets must be divisible by the number of friction intervals")
+            per_interval = num_buckets // len(friction_intervals)
+            for i, (low, high) in enumerate(friction_intervals):
+                if not 0 <= low < high:
+                    raise ValueError("Friction intervals must satisfy 0 <= low < high")
+                self.material_buckets[i * per_interval:(i + 1) * per_interval, 0] = (
+                    torch.rand(per_interval) * (high - low) + low
+                )
         self.material_buckets[:,1] = self.material_buckets[:,0]
 
     def __call__(
@@ -259,6 +282,7 @@ class randomize_rigid_body_material(ManagerTermBase):
         num_buckets: int,
         asset_cfg: SceneEntityCfg,
         make_consistent: bool = False,
+        friction_intervals: tuple[tuple[float, float], ...] | None = None,
     ):
         # resolve environment ids
         if env_ids is None:

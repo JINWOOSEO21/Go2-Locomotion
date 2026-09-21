@@ -49,7 +49,7 @@ class ParkourDefaultSceneCfg(InteractiveSceneCfg):
         max_init_terrain_level=2,
         collision_group=-1,
         physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="average",
+            friction_combine_mode="multiply",
             restitution_combine_mode="average",
             static_friction=1.0,
             dynamic_friction=1.0,

@@ -155,6 +155,7 @@ class UnitreeGo2StudentParkourEnvCfg_PLAY(UnitreeGo2StudentParkourEnvCfg_EVAL):
             # row 1개 = 모든 env 가 같은 난이도의 같은 행에 선다.
             self.scene.terrain.terrain_generator.num_rows = 1
         self.events.push_by_setting_velocity = None
+        self.events.push_angular_velocity = None
         # 학습 지형(사다리꼴 2종)만 균등. flat 은 학습 보조라 뺀다.
         # one_col_per_terrain=True 가 num_cols 를 활성 지형 수(=2)에 자동으로 맞춘다
         # (커리큘럼 컬럼→지형 매핑이 1:1 로 떨어지는 조건). 프리셋에 지형을 더하면

@@ -37,6 +37,26 @@ Two additional observation changes affect compatibility with earlier checkpoints
 - **Fixed terrain-type flags:** the flat/non-flat components at proprioceptive observation indices 11 and 12 are fixed to `non-flat=1` and `flat=0`, regardless of terrain. This removes dependence on an oracle terrain-type signal and targets robust locomotion over rough terrain. The convention applies to training, playback, evaluation, and demos.
 - **Estimated explicit privileged observations:** the elevation-map policy receives the frozen estimator's predictions in the nine-dimensional `priv_explicit` slot, including base linear velocity, in place of GT values. The estimator comes from teacher training. This aligns the policy's observations with deployment conditions, where GT base velocity is unavailable.
 
+### trained_v1.4: Slip and disturbance robustness
+
+Retrain the GT-scan teacher with PPO and the new reward, then adapt that teacher to elevation-map inputs using the existing EM training path.
+
+- Ground friction uses `multiply`. Robot friction uses 96 material buckets: 32 each in `[0.25, 0.5)`, `[0.5, 1.0)`, and `[1.0, 2.0)`, giving each interval probability 1/3. Static and dynamic friction match; all robot shapes share the sampled coefficient within an environment.
+- During training, world-frame x/y velocities are reset every 8 seconds. Body-frame roll/pitch/yaw angular velocity increments are added every 7 seconds. The bounds below apply independently to each component.
+- The teacher's slip reward is `-0.04 * sum(indicator(contact_force_norm >= 5 N) * foot_xy_speed)`, where the comparison is a per-foot indicator and speed is measured in world coordinates. Only current contacts count. EM adaptation still optimizes action imitation, not this reward directly.
+
+| Training progress | x/y bound (m/s) | Angular increment bound (rad/s) |
+| --- | --- | --- |
+| 0–20% | ±0.2 | ±0.1 |
+| 20–40% | ±0.4 | ±0.2 |
+| 40–60% | ±0.6 | ±0.3 |
+| 60–80% | ±0.8 | ±0.4 |
+| 80–100% | ±1.0 | ±0.5 |
+
+The schedule uses the additional iteration budget of the new training run, independent of the pretrained checkpoint's iteration number. Checkpoints save schedule progress: resuming a v1.4 run preserves its original schedule horizon and stays at full strength after that horizon. Starting EM adaptation from a teacher starts a fresh schedule. TensorBoard records `Disturbance/scale`.
+
+EVAL uses full strength and retains its existing 6-second linear interval, with the new 7-second angular interval. PLAY disables both disturbances. The `-0.04` slip weight is an initial value; its measured contribution still needs rollout calibration.
+
 ## Installation
 
 Run the following from your IsaacLab directory in an environment configured for IsaacLab:
