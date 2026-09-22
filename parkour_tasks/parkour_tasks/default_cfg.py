@@ -2,13 +2,10 @@ from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.scene import InteractiveSceneCfg
 
 from isaaclab_assets.robots.unitree import UNITREE_GO2_CFG  # isort: skip
-import os
 
 import isaaclab.sim as sim_utils
-import torch
 from isaaclab.envs import ViewerCfg
-from isaaclab.sensors import RayCasterCameraCfg, TiledCameraCfg
-from isaaclab.sensors.ray_caster.patterns import PinholeCameraPatternCfg
+from isaaclab.sensors import TiledCameraCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
@@ -16,23 +13,6 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from parkour_isaaclab.actuators.parkour_actuator_cfg import ParkourDCMotorCfg
 from parkour_isaaclab.sensors import L1ScanRayCasterCfg
 from parkour_isaaclab.terrains.parkour_terrain_importer import ParkourTerrainImporter
-from parkour_tasks.extreme_parkour_task.config.go2 import agents
-
-
-def quat_from_euler_xyz_tuple(roll: torch.Tensor, pitch: torch.Tensor, yaw: torch.Tensor) -> tuple:
-    cy = torch.cos(yaw * 0.5)
-    sy = torch.sin(yaw * 0.5)
-    cr = torch.cos(roll * 0.5)
-    sr = torch.sin(roll * 0.5)
-    cp = torch.cos(pitch * 0.5)
-    sp = torch.sin(pitch * 0.5)
-    # compute quaternion
-    qw = cy * cr * cp + sy * sr * sp
-    qx = cy * sr * cp - sy * cr * sp
-    qy = cy * cr * sp + sy * sr * cp
-    qz = sy * cr * cp - cy * sr * sp
-    convert = torch.stack([qw, qx, qy, qz], dim=-1) * torch.tensor([1.0, 1.0, 1.0, -1])
-    return tuple(convert.numpy().tolist())
 
 
 @configclass
@@ -93,35 +73,7 @@ class ParkourDefaultSceneCfg(InteractiveSceneCfg):
         )
 
 
-## we are now using a raycaster based camera, not a pinhole camera. see tail issue https://github.com/isaac-sim/IsaacLab/issues/719
-CAMERA_CFG = RayCasterCameraCfg(
-    prim_path="{ENV_REGEX_NS}/Robot/base",
-    data_types=["distance_to_camera"],
-    offset=RayCasterCameraCfg.OffsetCfg(
-        pos=(0.33, 0.0, 0.08),
-        rot=quat_from_euler_xyz_tuple(*tuple(torch.deg2rad(torch.tensor([180, 70, -90])))),
-        convention="ros",
-    ),
-    depth_clipping_behavior="max",
-    pattern_cfg=PinholeCameraPatternCfg(
-        focal_length=11.041,
-        horizontal_aperture=20.955,
-        vertical_aperture=12.240,
-        height=60,
-        width=106,
-    ),
-    mesh_prim_paths=["/World/ground"],
-    max_distance=2.0,
-)
-
-CAMERA_USD_CFG = AssetBaseCfg(
-    prim_path="{ENV_REGEX_NS}/Robot/base/d435",
-    spawn=sim_utils.UsdFileCfg(usd_path=os.path.join(agents.__path__[0], "d435.usd")),
-    init_state=AssetBaseCfg.InitialStateCfg(
-        pos=(0.33, 0.0, 0.08), rot=quat_from_euler_xyz_tuple(*tuple(torch.deg2rad(torch.tensor([180, 90, -90]))))
-    ),
-)
-# EM student 씬의 L1 LiDAR (elevation_map_scan 관측이 elevation map 을 만든다).
+# LiDAR 정책 씬의 L1 LiDAR (elevation_map_scan 관측이 elevation map 을 만든다).
 # lidar 브랜치의 검증된 설정을 그대로 가져왔다:
 # - 반구(수평 360° x 수직 90°) 패턴, 마운트는 완전 하향: 돔 축(+Z)을 아래로
 #   (X축 180° 회전). 실기 extrinsic 확정 시 이 rot 만 교체.
@@ -167,9 +119,7 @@ GO2_LIDAR_CFG = L1ScanRayCasterCfg(
 # (처음엔 10도로 뒀다가 로봇이 화면 하단에 잘려 20도로 키웠다.)
 #
 # 이 카메라는 씬에 있기만 해도 --enable_cameras 가 필요하고, env 수만큼 렌더가
-# 돌아 VRAM 과 속도를 먹는다. 그래서 teacher 씬은 record_camera=None 으로 두고
-# play.py --multicam 이 녹화할 때만 이 cfg 를 꽂아 넣는다. student 씬은 예전부터
-# 상시로 들고 있고, train.py 가 학습 경로에서 떼어낸다.
+# 돌아 VRAM 과 속도를 먹는다. 녹화할 때만 씬에 추가한다.
 RECORD_CAMERA_CFG = TiledCameraCfg(
     prim_path="{ENV_REGEX_NS}/record_cam",
     offset=TiledCameraCfg.OffsetCfg(
@@ -184,11 +134,7 @@ RECORD_CAMERA_CFG = TiledCameraCfg(
         horizontal_aperture=20.955,
         clipping_range=(0.1, 60.0),
     ),
-    # play.py 의 뷰포트 녹화는 1280x720 이지만 그건 카메라 1대 기준이다.
-    # 여기는 env 마다 1대라 같은 해상도면 픽셀 수가 env 수만큼 늘고,
-    # 실측상 1280x720x4 는 CUDA OOM 이 났다(가용 6.8GiB, 필요 7GiB+).
-    # 960x540 은 1280x720 의 56%, 기존 640x360 의 2.25배.
-    # GPU 가 비면 1280x720 으로 올릴 수 있다.
+    # 환경별 RGB 녹화 해상도.
     width=960,
     height=540,
 )

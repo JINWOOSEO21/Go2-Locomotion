@@ -76,7 +76,6 @@ class UnitreeGo2TeacherParkourEnvCfg(ParkourManagerBasedRLEnvCfg):
         apply_terrain_preset(self.scene.terrain.terrain_generator, "trapezoid_train")
         self.actions.joint_pos.use_delay = False
         self.actions.joint_pos.history_length = 1
-        self.events.random_camera_position = None
 
 
 @configclass

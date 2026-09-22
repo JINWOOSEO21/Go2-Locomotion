@@ -28,6 +28,18 @@ SCANDOTS_CFG_PATH = (
     / "parkour_teacher_cfg.py"
 )
 LIDAR_CFG_PATH = SCANDOTS_CFG_PATH.with_name("parkour_em_student_cfg.py")
+SCANDOTS_AGENT_CFG_PATH = (
+    REPO_ROOT
+    / "parkour_tasks"
+    / "parkour_tasks"
+    / "extreme_parkour_task"
+    / "config"
+    / "go2"
+    / "agents"
+    / "rsl_teacher_ppo_cfg.py"
+)
+LIDAR_AGENT_CFG_PATH = SCANDOTS_AGENT_CFG_PATH.with_name("rsl_em_student_ppo_cfg.py")
+TRAIN_PATH = REPO_ROOT / "scripts" / "rsl_rl" / "train.py"
 
 
 class _Tensor:
@@ -258,13 +270,24 @@ class LidarNoiseScheduleTest(unittest.TestCase):
         self.assertEqual(runner._lidar_noise_schedule_completed_iterations, 15_001)
 
 
+class _StateModule:
+    def __init__(self):
+        self.loaded = []
+
+    def load_state_dict(self, state):
+        self.loaded.append(state)
+        return True
+
+
 class LidarCheckpointContractTest(unittest.TestCase):
-    def test_depth_mode_remains_supported_without_lidar_adapter(self):
+    def test_only_scandots_and_lidar_modes_are_supported(self):
         tree = ast.parse(RUNNER_PATH.read_text(encoding="utf-8"), RUNNER_PATH)
         runner = next(node for node in tree.body if isinstance(node, ast.ClassDef))
         init = next(node for node in runner.body if isinstance(node, ast.FunctionDef) and node.name == "__init__")
         source = ast.unparse(init)
-        self.assertIn("'depth_input'", source)
+        self.assertIn("'scandots_input'", source)
+        self.assertIn("'lidar_input'", source)
+        self.assertNotIn("'depth_input'", source)
         lidar_branch = next(
             node
             for node in init.body
@@ -301,6 +324,95 @@ class LidarCheckpointContractTest(unittest.TestCase):
         self.assertIn("estimator_state_dict", warm_start_source)
         self.assertNotIn("optimizer_state_dict", warm_start_source)
         self.assertNotIn("_restore_terrain_levels", warm_start_source)
+
+    def _load_harness(self, checkpoint):
+        namespace = _class_methods(
+            RUNNER_PATH,
+            "OnPolicyRunnerWithExtractor",
+            {"load"},
+            {"torch": types.SimpleNamespace(load=lambda *_args, **_kwargs: checkpoint)},
+        )
+        harness = types.SimpleNamespace(
+            input_mode="lidar_input",
+            algorithm_class_name="PPOWithExtractor",
+            empirical_normalization=False,
+            alg=types.SimpleNamespace(
+                policy=_StateModule(),
+                estimator=_StateModule(),
+                counter=17,
+                rnd=None,
+                optimizer=_StateModule(),
+                estimator_optimizer=_StateModule(),
+                hist_encoder_optimizer=_StateModule(),
+            ),
+            current_learning_iteration=99,
+            lidar_noise_ramp_ratio=0.7,
+            _lidar_noise_schedule_total_iterations=123,
+            _lidar_noise_schedule_completed_iterations=45,
+            _lidar_noise_schedule_ramp_ratio=0.7,
+            _lidar_noise_schedule_resume_pending=True,
+            _disturbance_schedule_total_iterations=123,
+            _disturbance_schedule_completed_iterations=45,
+            _disturbance_schedule_resume_pending=True,
+        )
+        harness.restore_calls = []
+        harness._restore_alg_counter = lambda state: harness.restore_calls.append(("counter", state))
+        harness._restore_disturbance_schedule = lambda state: harness.restore_calls.append(("disturbance", state))
+        harness._restore_lidar_noise_schedule = lambda state: harness.restore_calls.append(("lidar", state))
+        harness._restore_terrain_levels = lambda levels: harness.restore_calls.append(("terrain", levels))
+        harness.load = types.MethodType(namespace["load"], harness)
+        return harness
+
+    def test_warm_start_loads_only_ppo_weights_and_resets_schedules(self):
+        checkpoint = {
+            "model_state_dict": "policy",
+            "estimator_state_dict": "estimator",
+            "algorithm": "PPOWithExtractor",
+            "infos": {"source": "scandots"},
+        }
+        runner = self._load_harness(checkpoint)
+        self.assertEqual(runner.load("checkpoint.pt", warm_start=True), {"source": "scandots"})
+        self.assertEqual(runner.alg.policy.loaded, ["policy"])
+        self.assertEqual(runner.alg.estimator.loaded, ["estimator"])
+        self.assertEqual(runner.alg.counter, 0)
+        self.assertEqual(runner.current_learning_iteration, 0)
+        self.assertIsNone(runner._lidar_noise_schedule_total_iterations)
+        self.assertIsNone(runner._disturbance_schedule_total_iterations)
+
+    def test_legacy_imitation_checkpoint_is_rejected(self):
+        runner = self._load_harness({"depth_actor_state_dict": {}})
+        with self.assertRaisesRegex(ValueError, "legacy imitation checkpoint"):
+            runner.load("checkpoint.pt", warm_start=True)
+
+    def test_lidar_resume_restores_ppo_optimizers_and_schedule_state(self):
+        checkpoint = {
+            "model_state_dict": "policy",
+            "estimator_state_dict": "estimator",
+            "optimizer_state_dict": "ppo_optimizer",
+            "estimator_optimizer_state_dict": "estimator_optimizer",
+            "hist_encoder_optimizer_state_dict": "history_optimizer",
+            "algorithm": "PPOWithExtractor",
+            "input_mode": "lidar_input",
+            "lidar_noise_schedule": {
+                "total_iterations": 30_000,
+                "completed_iterations": 10_000,
+                "ramp_ratio": 0.7,
+            },
+            "disturbance_schedule": {"total_iterations": 30_000, "completed_iterations": 10_000},
+            "terrain_levels": "levels",
+            "iter": 10_000,
+            "infos": {},
+        }
+        runner = self._load_harness(checkpoint)
+        runner.load("checkpoint.pt", restore_terrain_curriculum=True)
+        self.assertEqual(runner.current_learning_iteration, 10_000)
+        self.assertEqual(runner.alg.optimizer.loaded, ["ppo_optimizer"])
+        self.assertEqual(runner.alg.estimator_optimizer.loaded, ["estimator_optimizer"])
+        self.assertEqual(runner.alg.hist_encoder_optimizer.loaded, ["history_optimizer"])
+        self.assertEqual(
+            [name for name, _ in runner.restore_calls],
+            ["counter", "disturbance", "lidar", "terrain"],
+        )
 
     def test_rl_loop_applies_and_advances_noise_after_update(self):
         tree = ast.parse(RUNNER_PATH.read_text(encoding="utf-8"), RUNNER_PATH)
@@ -344,6 +456,23 @@ class ActionDelayContractTest(unittest.TestCase):
                 source = self._post_init_source(LIDAR_CFG_PATH, class_name)
                 self.assertIn("self.actions.joint_pos.use_delay = True", source)
                 self.assertIn("self.actions.joint_pos.history_length = 8", source)
+
+
+class TrainingDefaultsContractTest(unittest.TestCase):
+    def test_both_phases_use_24_steps_and_flat_timestamped_run_names(self):
+        scandots_source = SCANDOTS_AGENT_CFG_PATH.read_text(encoding="utf-8")
+        lidar_source = LIDAR_AGENT_CFG_PATH.read_text(encoding="utf-8")
+        self.assertIn("num_steps_per_env = 24", scandots_source)
+        self.assertNotIn("num_steps_per_env", lidar_source)
+        self.assertIn('run_name = "scandots"', scandots_source)
+        self.assertIn('run_name = "lidar"', lidar_source)
+        self.assertNotIn("run_subdir", scandots_source + lidar_source)
+
+    def test_train_rejects_removed_video_option(self):
+        source = TRAIN_PATH.read_text(encoding="utf-8")
+        self.assertNotIn('add_argument("--video"', source)
+        self.assertIn("allow_abbrev=False", source)
+        self.assertIn("unknown_options", source)
 
 
 if __name__ == "__main__":

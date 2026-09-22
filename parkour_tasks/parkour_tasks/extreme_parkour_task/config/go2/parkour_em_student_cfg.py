@@ -20,9 +20,7 @@ class ParkourLidarSceneCfg(ParkourTeacherSceneCfg):
 
 @configclass
 class UnitreeGo2LidarParkourEnvCfg(UnitreeGo2TeacherParkourEnvCfg):
-    # Fewer parallel environments keep the mapping backend's resource use bounded.
-    # --num_envs overrides this without changing the PPO or task settings.
-    scene: ParkourLidarSceneCfg = ParkourLidarSceneCfg(num_envs=192, env_spacing=1.0)
+    scene: ParkourLidarSceneCfg = ParkourLidarSceneCfg(num_envs=4096, env_spacing=1.0)
     observations: LidarObservationsCfg = LidarObservationsCfg()
     lidar_noise_scale: float = 0.0
 

@@ -20,7 +20,7 @@ import imageio.v2 as imageio
 import numpy as np
 import torch
 
-from scripts.rsl_rl.video_overlay import depth_to_panel, label_panel, scandots_to_panel
+from scripts.rsl_rl.video_overlay import label_panel, scandots_to_panel
 
 
 def pad_to_even(img: np.ndarray) -> np.ndarray:
@@ -32,8 +32,7 @@ def pad_to_even(img: np.ndarray) -> np.ndarray:
     BrokenPipe 로만 올라와서 원인이 안 보인다.
 
     패널 폭은 높이에 종횡비를 곱해 나오므로 조합에 따라 홀수가 된다.
-    540 높이 기준으로 RGB(960) | depth(810) 는 1770 이라 우연히 통과하지만,
-    RGB | scandots(495) 는 1455, 셋 다 붙이면 2265 라 홀수다. 패널마다 폭을
+    540 높이 기준으로 RGB(960) | scandots(495) 는 1455 라 홀수다. 패널마다 폭을
     맞추는 대신 합성이 끝난 최종 프레임에서 한 번만 보정한다. 카메라 해상도나
     패널 구성이 바뀌어도 여기만 지나면 항상 안전하다.
 
@@ -154,18 +153,16 @@ class PerEnvVideoRecorder:
         target = self.robot.data.root_pos_w
         self.camera.set_world_poses_from_view(eyes=target + self.cam_offset, targets=target)
 
-    def capture(self, depth=None, scandots=None) -> bool:
+    def capture(self, scandots=None) -> bool:
         """현재 카메라 출력에서 env 별로 한 프레임씩 쓴다. 쓸 게 없으면 False.
 
         Args:
-            depth: (num_envs, ...) 모양의 depth 텐서/배열. 주면 각 프레임 오른쪽에
-                depth 패널을 붙인다 (play.py --panels). None 이면 안 붙인다.
             scandots: (num_envs, num_scan) 모양의 height scan — 주면 그 오른쪽에
                 탑뷰 격자 패널을 붙인다 (play.py --panels). 여러 개를 나란히
-                비교하려면 [(라벨, 배열), ...] 리스트로 준다 (EM student 의
+                비교하려면 [(라벨, 배열), ...] 리스트로 준다 (LiDAR policy 의
                 GT | Estimated). 라벨은 패널 왼쪽 상단에 그려진다.
 
-        둘 다 주면 RGB | depth | scandots... 순으로 가로로 붙는다.
+        RGB 오른쪽에 요청한 scandots 패널을 순서대로 붙인다.
         """
         rgb = self.camera.data.output["rgb"]
         if rgb is None:
@@ -182,8 +179,6 @@ class PerEnvVideoRecorder:
         for i, w in enumerate(self.writers):
             frame = frames[i]
             panels = [frame]
-            if depth is not None:
-                panels.append(depth_to_panel(depth[i], frame.shape[0]))
             if scandots is not None:
                 entries = scandots if isinstance(scandots, list) else [(None, scandots)]
                 for panel_label, arr in entries:

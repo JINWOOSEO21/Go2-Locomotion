@@ -11,17 +11,14 @@ specify the reward function and its parameters.
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-import cv2
 import numpy as np
 import torch
-import torchvision
 from isaaclab.assets import Articulation
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
-from isaaclab.sensors import ContactSensor, RayCaster, RayCasterCamera
+from isaaclab.sensors import ContactSensor, RayCaster
 from isaaclab.utils.math import euler_xyz_from_quat, matrix_from_quat, quat_apply, wrap_to_pi
 
 from parkour_isaaclab.envs.mdp.parkours import ParkourEvent
@@ -164,8 +161,7 @@ class ExtremeParkourObservations(ManagerTermBase):
 class elevation_map_scan(ManagerTermBase):
     """L1 LiDAR → self-hit 필터 → elevation_mapping_cupy → scandots 격자 샘플.
 
-    계획서 docs/emcupy_student_plan.md §2.1 의 파이프라인. depth camera 파이프라인을
-    대체하는 student 전용 관측으로, teacher scandots(obs[53:185])와 같은 위치·같은
+    LiDAR 정책용 관측으로, GT scandots(obs[53:185])와 같은 위치·같은
     정규화(clip(base_z − h − 0.3, ±1))의 132-vector 를 낸다. EM tick(= 센서 자연
     프레임 0.1s, 10Hz)에서만 갱신되고 사이 step 은 최신 값을 그대로 돌려준다.
     """
@@ -318,7 +314,7 @@ class elevation_map_scan(ManagerTermBase):
         odom_yaw_walk_std_deg: float = 0.003,
         odom_rp_std_deg: float = 0.5,
     ) -> torch.Tensor:
-        # 센서 프레임(0.1s)과 같은 위상: 기존 depth/scandots 의 %5 게이트와 일치.
+        # 센서 프레임(0.1s)과 같은 위상: 5 control step마다 갱신.
         if env.common_step_counter % self.update_interval == 0:
             self._update()
         return self.h_obs
@@ -461,84 +457,3 @@ class elevation_map_scan(ManagerTermBase):
         py = base_pos_n[:, 1:2] + sy[:, None] * ox[None, :] + cy[:, None] * oy[None, :]
         points_xy = torch.stack([px, py], dim=-1)
         self.h_obs, self.valid_frac, self.ub_frac = self.backend.sample(points_xy, base_pos_n[:, 2])
-
-
-class image_features(ManagerTermBase):
-    def __init__(self, cfg: ObservationTermCfg, env: ParkourManagerBasedRLEnv):
-        super().__init__(cfg, env)
-        self.camera_sensor: RayCasterCamera = env.scene[cfg.params["sensor_cfg"].name]
-        self.clipping_range = self.camera_sensor.cfg.max_distance
-        resized = cfg.params["resize"]
-        self.buffer_len = cfg.params["buffer_len"]
-        self.debug_vis = cfg.params["debug_vis"]
-        # cv2.imshow 가 가능한 환경인지. 첫 실패 시 False 로 내려간다.
-        self._can_show = True
-        self.resize_transform = torchvision.transforms.Resize(
-            (resized[0], resized[1]), interpolation=torchvision.transforms.InterpolationMode.BICUBIC
-        ).to(env.device)
-        self.depth_buffer = torch.zeros(self.num_envs, self.buffer_len, resized[0], resized[1]).to(self.device)
-
-    def reset(self, env_ids: Sequence[int] | None = None) -> None:
-        if env_ids is None:
-            env_ids = torch.arange(0, self.num_envs)
-        depth_images = self.camera_sensor.data.output["distance_to_camera"].squeeze(-1)[env_ids]
-        for depth_image, env_id in zip(depth_images, env_ids):
-            processed_image = self._process_depth_image(depth_image)
-            self.depth_buffer[env_id] = torch.stack([processed_image] * 2, dim=0)
-
-    def __call__(
-        self,
-        env: ParkourManagerBasedRLEnv,
-        sensor_cfg: SceneEntityCfg,
-        resize: tuple(int, int),
-        buffer_len: int,
-        debug_vis: bool,
-    ):
-        if env.common_step_counter % 5 == 0:
-            depth_images = self.camera_sensor.data.output["distance_to_camera"].squeeze(-1)
-            for env_id, depth_image in enumerate(depth_images):
-                processed_image = self._process_depth_image(depth_image)
-                self.depth_buffer[env_id] = torch.cat(
-                    [self.depth_buffer[env_id, 1:], processed_image.to(self.device).unsqueeze(0)], dim=0
-                )
-        if self.debug_vis and self._can_show:
-            depth_images_np = self.depth_buffer[:, -2].detach().cpu().numpy()
-            depth_images_norm = []
-            for img in depth_images_np:
-                depth_images_norm.append(img)
-            rows = []
-            ncols = 4
-            for i in range(0, len(depth_images_norm), ncols):
-                chunk = list(depth_images_norm[i : i + ncols])
-                # 마지막 행이 ncols 개를 못 채우면 행마다 폭이 달라져 vstack 이 실패한다.
-                # (num_envs=5 -> 4 + 1 이면 348 vs 87 로 어긋난다.)
-                # 빈 칸을 0 으로 채워 폭을 맞춘다.
-                if len(chunk) < ncols:
-                    chunk += [np.zeros_like(chunk[0])] * (ncols - len(chunk))
-                rows.append(np.hstack(chunk))
-
-            grid_img = np.vstack(rows)
-            try:
-                cv2.imshow("depth_images_grid", grid_img)
-                cv2.waitKey(1)
-            except cv2.error as e:
-                # 헤드리스(SSH, --headless)이거나 OpenCV 가 GUI 지원 없이 빌드된 경우.
-                # 관측 계산 자체는 문제없으므로 디버그 창만 끄고 계속 진행한다.
-                self._can_show = False
-                warnings.warn(f"depth debug window disabled (no display / OpenCV built without GUI): {e}")
-        return self.depth_buffer[:, -2].to(env.device)
-
-    def _process_depth_image(self, depth_image):
-        depth_image = self._crop_depth_image(depth_image)
-        depth_image = self.resize_transform(depth_image[None, :]).squeeze()
-        depth_image = self._normalize_depth_image(depth_image)
-        return depth_image
-
-    def _crop_depth_image(self, depth_image):
-        # crop 30 pixels from the left and right and and 20 pixels from bottom and return croped image
-        return depth_image[:-2, 4:-4]
-
-    def _normalize_depth_image(self, depth_image):
-        depth_image = depth_image  # make similiar to scandot
-        depth_image = (depth_image) / (self.clipping_range) - 0.5
-        return depth_image

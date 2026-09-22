@@ -6,6 +6,7 @@ Code reference:
 """
 
 import argparse
+import copy
 import os
 import sys
 import time
@@ -16,7 +17,7 @@ import cli_args  # isort: skip
 from isaaclab.app import AppLauncher
 
 # add argparse arguments
-parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
+parser = argparse.ArgumentParser(description="Run an interactive parkour policy demo.", allow_abbrev=False)
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
@@ -66,56 +67,28 @@ parser.add_argument(
         "Set to -1 to require an explicit viewport selection (original behaviour)."
     ),
 )
-# 기본 녹화 위치. 끝의 구분자를 남겨 두는 것이 중요하다. set_up_video_writer 는
-# 디렉터리 여부를 `endswith(os.sep) or os.path.isdir(path)` 로 판정하는데, 첫 실행 때는
-# 이 폴더가 아직 없어서 isdir 이 False 다. 구분자가 없으면 파일 경로로 보고
-# 'demo.mp4' 를 만들어 버린다.
-_DEFAULT_VIDEO_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "..",
-    "..",
-    "logs",
-    "rsl_rl",
-    "unitree_go2_parkour",
-    "student_pretrained",
-    "videos",
-    "demo",
-    "",
-)
-
 parser.add_argument(
-    "--video",
-    type=str,
-    default=_DEFAULT_VIDEO_DIR,
-    help=(
-        "Write the follow camera to this mp4 path while the demo runs (recording starts at boot "
-        "and the file is finalised on exit). A directory path or a path ending in / gets an "
-        "auto-generated file name (demo_<terrain>.mp4). Unlike play.py this takes a path, not a "
-        "flag: the demo loop has no step budget, so the file is closed when you quit with "
-        "q / Ctrl-C. Defaults to the checkpoint's videos/demo folder; pass '' to disable recording."
-    ),
-)
-parser.add_argument(
-    "--with_depth",
+    "--multicam",
     action="store_true",
-    default=False,
-    help=(
-        "Paste the depth map the policy actually consumes onto the right of each recorded frame, "
-        "so one video shows the robot and its depth input side by side (same panel as "
-        "play.py --multicam --panels). Student (distillation) tasks only."
-    ),
+    help="Record one mp4 per environment until the demo exits.",
+)
+parser.add_argument(
+    "--out_dir",
+    type=str,
+    default=None,
+    help="--multicam only. Output directory (default: <checkpoint run>/videos).",
 )
 parser.add_argument(
     "--record_fps",
     type=int,
     default=0,
-    help="Playback fps of --video. 0 = derive from the sim rate so the video runs real-time.",
+    help="Playback fps of --multicam. 0 derives it from the simulation rate.",
 )
 parser.add_argument(
     "--record_every",
     type=int,
     default=1,
-    help="Write one frame every N sim steps for --video. 2 halves the file size and the fps.",
+    help="Write one frame every N simulation steps for --multicam.",
 )
 parser.add_argument(
     "--terrain",
@@ -147,13 +120,12 @@ AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
 
-# MJPEG 스트리밍과 mp4 녹화 모두 record_camera(TiledCamera) 렌더가 필요하다.
-if args_cli.mjpeg_port or args_cli.video:
+# MJPEG streaming and multicamera recording require the TiledCamera.
+if args_cli.mjpeg_port or args_cli.multicam:
     args_cli.enable_cameras = True
 
-# 새 task 이름에서도 기존 Depth/Lidar demo의 카메라 활성화 동작을 유지한다.
-# Scandots 입력 task는 별도 녹화/스트리밍 옵션에 따라서만 카메라를 활성화한다.
-if args_cli.task is not None and any(input_name in args_cli.task for input_name in ("Depth", "Lidar")):
+# LiDAR preprocessing requires cameras even without recording.
+if args_cli.task is not None and "Lidar" in args_cli.task:
     args_cli.enable_cameras = True
 
 # launch omniverse app
@@ -176,14 +148,15 @@ from pxr import Gf, Sdf
 
 from parkour_isaaclab.envs import ParkourManagerBasedRLEnv
 from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
-from parkour_tasks.extreme_parkour_task.config.go2.parkour_student_cfg import UnitreeGo2StudentParkourEnvCfg_PLAY
+from parkour_tasks.default_cfg import RECORD_CAMERA_CFG
+from parkour_tasks.extreme_parkour_task.config.go2.parkour_em_student_cfg import UnitreeGo2LidarParkourEnvCfg_PLAY
 from parkour_tasks.extreme_parkour_task.config.go2.parkour_teacher_cfg import UnitreeGo2TeacherParkourEnvCfg_PLAY
 from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
 from scripts.rsl_rl.keyboard_teleop import KeyboardTeleop, KeyboardTeleopState
 from scripts.rsl_rl.mjpeg_server import MjpegStreamer
 from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
+from scripts.rsl_rl.multicam_recorder import PerEnvVideoRecorder
 from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
-from scripts.rsl_rl.video_overlay import depth_to_panel
 
 # --terrain 값 -> terrain_generator.sub_terrains 의 키.
 _TERRAIN_KEYS = {
@@ -245,15 +218,15 @@ class ParkourDemoGO2:
         elif args_cli.checkpoint:
             checkpoint = retrieve_file_path(args_cli.checkpoint)
         else:
-            # student_pretrained/ 바로 아래의 승격된 checkpoint 우선, 없으면 최근 하위 run.
             checkpoint = get_checkpoint_path_with_fallback(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
         self.agent_cfg = agent_cfg
+        self.log_dir = os.path.dirname(checkpoint)
         # create envionrment
         env_cfg = (
-            UnitreeGo2TeacherParkourEnvCfg_PLAY()
-            if agent_cfg.algorithm.class_name == "PPOWithExtractor"
-            else UnitreeGo2StudentParkourEnvCfg_PLAY()
+            UnitreeGo2LidarParkourEnvCfg_PLAY()
+            if agent_cfg.input_mode == "lidar_input"
+            else UnitreeGo2TeacherParkourEnvCfg_PLAY()
         )
         env_cfg.scene.num_envs = args_cli.num_envs
         env_cfg.episode_length_s = 1000000
@@ -264,7 +237,7 @@ class ParkourDemoGO2:
         # 추격 카메라 렌더는 스트리밍 시 스텝당 비용의 대부분을 차지한다.
         # 씬 기본값 960x540 은 녹화용이고, 실시간 조종에는 과하다.
         if getattr(env_cfg.scene, "record_camera", None) is not None:
-            if args_cli.mjpeg_port or args_cli.video:
+            if args_cli.mjpeg_port or args_cli.multicam:
                 w, _, h = args_cli.record_res.lower().partition("x")
                 env_cfg.scene.record_camera.width = int(w)
                 env_cfg.scene.record_camera.height = int(h)
@@ -272,6 +245,11 @@ class ParkourDemoGO2:
                 # 스트리밍을 안 하면 이 카메라의 프레임을 읽는 곳이 없다. 그래도 씬에 있으면
                 # 매 스텝 렌더는 그대로 돌아가므로 꺼 둔다(원래 play.py --multicam 의 녹화용이다).
                 env_cfg.scene.record_camera = None
+        elif args_cli.mjpeg_port or args_cli.multicam:
+            env_cfg.scene.record_camera = copy.deepcopy(RECORD_CAMERA_CFG)
+            w, _, h = args_cli.record_res.lower().partition("x")
+            env_cfg.scene.record_camera.width = int(w)
+            env_cfg.scene.record_camera.height = int(h)
         self.env_cfg = env_cfg
         # wrap around environment for rsl-rl
         self.env = ParkourRslRlVecEnvWrapper(ParkourManagerBasedRLEnv(cfg=env_cfg))
@@ -281,12 +259,7 @@ class ParkourDemoGO2:
         ppo_runner.load(checkpoint)
         # obtain the trained policy for inference
         self.estimator = ppo_runner.get_estimator_inference_policy(device=self.device)
-        if agent_cfg.algorithm.class_name == "PPOWithExtractor":
-            self.policy = ppo_runner.get_inference_policy(device=self.device)
-            self.depth_encoder = None
-        else:
-            self.policy = ppo_runner.get_inference_depth_policy(device=self.device)
-            self.depth_encoder = ppo_runner.get_depth_encoder_inference_policy(device=self.device)
+        self.policy = ppo_runner.get_inference_policy(device=self.device)
 
         self.create_camera()
         self.commands = torch.zeros(env_cfg.scene.num_envs, 3, device=self.device)
@@ -337,20 +310,11 @@ class ParkourDemoGO2:
         """record_camera 를 붙이고, 요청된 출력(브라우저 스트리밍 / mp4)을 준비한다."""
         self.mjpeg = None
         self.record_camera = None
-        self.video_writer = None
-        self._video_frames = 0
-        self._video_steps = 0
-        self._video_path = None
-        # --with_depth 로 붙일, 정책이 실제로 먹은 depth 텐서. run_loop 가 매 스텝 채운다.
-        self.last_depth = None
-        # depth 패널은 student 정책일 때만 의미가 있다. teacher 는 depth 관측 자체가 없다.
-        is_distill = self.agent_cfg.algorithm.class_name == "DistillationWithExtractor"
-        self.record_depth = bool(args_cli.with_depth and is_distill)
-        if args_cli.with_depth and not is_distill:
-            print("[demo] --with_depth 는 student(Distillation) 태스크 전용이다. depth 없이 녹화한다.")
-        if not (args_cli.mjpeg_port or args_cli.video):
+        self.recorder = None
+        self._record_steps = 0
+        if not (args_cli.mjpeg_port or args_cli.multicam):
             return
-        # record_camera 는 Student 씬(ParkourStudentSceneCfg)에만 있다.
+        # 스트리밍 또는 녹화를 요청하면 RGB 카메라가 씬에 추가된다.
         if "record_camera" not in self.env.unwrapped.scene.sensors:
             print("[demo] 이 태스크의 씬에는 record_camera 가 없어 스트리밍/녹화를 건너뛴다.")
             return
@@ -359,74 +323,52 @@ class ParkourDemoGO2:
             self.mjpeg = MjpegStreamer(
                 port=args_cli.mjpeg_port, quality=args_cli.mjpeg_quality, every=args_cli.mjpeg_every
             )
-        if args_cli.video:
-            self.set_up_video_writer()
         # play.py --multicam 과 같은 좌측 측면 시점. 월드 기준 상수 오프셋이라
         # 자세는 고정된 채 평행이동만 하고, 로봇이 점프해도 화면이 기울지 않는다.
         self._record_cam_offset = torch.tensor([0.0, 2.6, 1.6], device=self.device)
 
-    def set_up_video_writer(self):
-        """--video 경로에 mp4 라이터를 연다.
+    def start_multicam_recording(self):
+        """Open per-environment writers after the initial reset.
 
         fps 는 기본적으로 시뮬 속도(1/step_dt)에서 뽑는다. 실시간 배속으로 재생되게
         하려는 것이고, --record_every 로 프레임을 솎으면 그만큼 나눠 준다.
         데모는 실측 40~70Hz 로 도는데 그건 렌더가 느려서지 시뮬 dt 가 바뀐 게 아니므로
         벽시계 속도가 아니라 step_dt 를 기준으로 삼는 것이 맞다.
         """
-        import imageio
-
-        path = args_cli.video
-        if path.endswith(os.sep) or os.path.isdir(path):
-            name = f"demo_{args_cli.terrain or 'mixed'}.mp4"
-            path = os.path.join(path, name)
-        if not path.lower().endswith(".mp4"):
-            path += ".mp4"
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-
+        if not args_cli.multicam or self.record_camera is None:
+            return
         every = max(1, int(args_cli.record_every))
         fps = args_cli.record_fps or max(1, round(1.0 / self.env.unwrapped.step_dt / every))
-        # quality 8 은 imageio-ffmpeg 기준 고화질(기본값 5보다 높음).
-        # macro_block_size=1 이면 해상도를 16 의 배수로 강제 리사이즈하지 않는다.
-        self.video_writer = imageio.get_writer(path, fps=fps, quality=8, macro_block_size=1)
-        self._video_path = os.path.abspath(path)
-        print(f"[video] 녹화 시작 -> {self._video_path}  ({fps} fps, {every} 스텝마다 1 프레임)")
+        out_dir = args_cli.out_dir or os.path.join(self.log_dir, "videos")
+        self.recorder = PerEnvVideoRecorder(self.env, out_dir, fps=fps)
 
     def track_record_camera(self):
         """스텝 중에 렌더가 일어나므로, step() 직전에 카메라를 현재 로봇 위치로 옮긴다."""
+        if self.recorder is not None:
+            self.recorder.track_camera()
+            return
         if self.record_camera is None:
             return
         target = self.env.unwrapped.scene["robot"].data.root_pos_w
         self.record_camera.set_world_poses_from_view(eyes=target + self._record_cam_offset, targets=target)
 
     def publish_frame(self):
-        """가장 최근 렌더 결과를 스트리머와 mp4 라이터에 넘긴다.
-
-        GPU->CPU 복사는 한 번만 하고 두 곳이 같은 배열을 나눠 쓴다.
-        """
-        if self.mjpeg is None and self.video_writer is None:
+        """선택한 환경은 스트리밍하고, 녹화는 모든 환경의 RGB를 저장한다."""
+        if self.mjpeg is None and self.recorder is None:
             return
         rgb = self.record_camera.data.output.get("rgb")
         if rgb is None:
             return
-        idx = self._selected_id if self._selected_id is not None else 0
-        frame = rgb[idx, ..., :3].detach().cpu().numpy()
-        if frame.dtype != np.uint8:
-            # float 로 나오는 경우 0..1 로 보고 변환한다. depth 패널이 uint8 이라
-            # hstack 전에 맞춰 둬야 한다(스트리머는 어느 쪽이든 받는다).
-            frame = np.clip(frame * 255.0, 0, 255).astype(np.uint8)
-        if self.record_depth and self.last_depth is not None:
-            # 정책 호출에 쓴 것과 같은 텐서를 그대로 그린다. depth 버퍼는 5 스텝마다
-            # 갱신되므로 사이 스텝에서는 직전 프레임이 유지되는데, 그게 정책이 실제로
-            # 보고 있는 입력이다. play.py --multicam --panels 와 같은 패널이다.
-            panel = depth_to_panel(self.last_depth[idx].detach().cpu().numpy(), frame.shape[0])
-            frame = np.hstack([frame, panel])
         if self.mjpeg is not None:
+            idx = self._selected_id if self._selected_id is not None else 0
+            frame = rgb[idx, ..., :3].detach().cpu().numpy()
+            if frame.dtype != np.uint8:
+                frame = np.clip(frame * 255.0, 0, 255).astype(np.uint8)
             self.mjpeg.push(frame)
-        if self.video_writer is not None:
-            self._video_steps += 1
-            if self._video_steps % max(1, int(args_cli.record_every)) == 0:
-                self.video_writer.append_data(frame)
-                self._video_frames += 1
+        if self.recorder is not None:
+            self._record_steps += 1
+            if self._record_steps % max(1, int(args_cli.record_every)) == 0:
+                self.recorder.capture()
 
     def set_up_keyboard(self):
         """키보드 텔레오퍼레이션을 켠다.
@@ -527,9 +469,7 @@ class ParkourDemoGO2:
     def apply_teleop(self):
         """키 입력을 읽고, 일회성 요청(리셋/카메라)을 처리한다.
 
-        방향값 자체는 여기서 쓰지 않는다. obs 를 덮어써야 하는데 obs 는 정책 직전에야
-        확정되므로(학생 정책은 depth 인코더가 6:8 을 채운 뒤여야 한다) 적용은
-        apply_teleop_yaw() 에서 한다.
+        방향값은 정책 호출 직전에 apply_teleop_yaw()에서 관측에 반영한다.
         """
         if self.teleop is None:
             return
@@ -564,8 +504,7 @@ class ParkourDemoGO2:
 
         원본 관측에서 6,7 은 각각 delta_yaw / delta_next_yaw 이고,
             delta = (goal point 방향의 월드 각도) - (로봇의 현재 진행 각도)
-        로 만들어진다. teacher 는 파쿠르 목표점에서, student 는 depth 인코더 예측에서
-        그 값을 얻는데, 여기서는 둘 다 버리고 사용자가 방향키로 정한 목표 방향을
+        로 만들어진다. 여기서는 사용자가 방향키로 정한 목표 방향을
         goal point 방향으로 간주해 같은 식으로 다시 계산한다.
 
         index 7(원래는 '다음 goal' 방향)은 요청대로 index 6 과 같은 값을 넣는다.
@@ -595,15 +534,9 @@ class ParkourDemoGO2:
         if getattr(self, "mjpeg", None) is not None:
             self.mjpeg.close()
             self.mjpeg = None
-        # mp4 는 moov atom 을 close() 시점에 쓴다. 여기서 못 닫으면 파일이 통째로
-        # 재생 불가가 되므로, 예외로 죽든 q 로 나가든 반드시 지나가는 자리에 둔다.
-        if getattr(self, "video_writer", None) is not None:
-            try:
-                self.video_writer.close()
-                print(f"\r\n[video] {self._video_frames} 프레임 저장 완료 -> {self._video_path}", flush=True)
-            except Exception as exc:  # noqa: BLE001
-                print(f"\r\n[video] mp4 를 닫는 중 실패({exc}). 파일이 손상됐을 수 있다.", flush=True)
-            self.video_writer = None
+        if getattr(self, "recorder", None) is not None:
+            self.recorder.close()
+            self.recorder = None
 
     def set_up_gamepad(self):
         self._input = carb.input.acquire_input_interface()
@@ -714,6 +647,7 @@ def main():
     num_scan = actor_param.num_scan
     num_prop = actor_param.num_prop
     obs, extras = demo_go2.env.reset()
+    demo_go2.start_multicam_recording()
     # 관측의 지형 타입 플래그. observations.py 가 이제 지형과 무관하게
     #   index 11 = 1 (non-flat 고정), index 12 = 0 (flat 고정)
     # 으로 만든다 — 실기에는 flat 감지 오라클이 없어 정책이 이 신호에 의존하지
@@ -731,14 +665,6 @@ def main():
 
 
 def run_loop(demo_go2, obs, extras, num_prop, num_scan, num_priv_explicit):
-    # depth encoder 는 GRU 라서 forward 를 부를 때마다 hidden state 가 한 칸 전진한다
-    # (depth_backbone.py: `depth_latent, self.hidden_states = self.rnn(...)`).
-    # 학습은 5 스텝에 한 번만 부르므로(on_policy_runner_with_extractor.py 의
-    # `common_step_counter % 5 == 0`) 매 스텝 부르면 순환 상태가 학습 때보다 5 배 빠르게
-    # 흘러가고, 그 결과 scandots latent 와 yaw 예측이 둘 다 학습 분포를 벗어난다.
-    # play.py 와 동일하게 갱신 주기를 맞추고, 갱신 사이에는 마지막 값을 그대로 유지한다.
-    depth_latent = None
-    depth_yaw = None
     while simulation_app.is_running():
         # 키 입력을 읽는다(리셋/카메라/종료 요청도 여기서 처리).
         demo_go2.apply_teleop()
@@ -754,36 +680,10 @@ def run_loop(demo_go2, obs, extras, num_prop, num_scan, num_priv_explicit):
             # 게임패드 모드는 기존 동작을 그대로 유지한다.
             if args_cli.input == "gamepad":
                 obs[:, 9] = demo_go2.commands[:, 0]
-            if demo_go2.agent_cfg.algorithm.class_name != "DistillationWithExtractor":
-                priv_states_estimated = demo_go2.estimator.inference(obs[:, :num_prop])
-                obs[:, num_prop + num_scan : num_prop + num_scan + num_priv_explicit] = priv_states_estimated
-                demo_go2.apply_teleop_yaw(obs)
-                # hist_encoding=True 는 priv_latent 대신 관측 히스토리 인코더가 뽑은
-                # latent 를 쓴다는 뜻이다(RMA 의 adaptation module 경로). 실기에서는
-                # priv_latent 를 못 받으므로 이쪽이 배포 경로이고, play.py 도 같은 값을
-                # 쓴다. 기본값 False 로 두면 데모만 특권 정보를 보는 셈이라 맞춘다.
-                action = demo_go2.policy(obs, hist_encoding=True)
-            else:
-                depth_camera = extras["observations"]["depth_camera"].to(demo_go2.device)
-                # --with_depth 녹화용. 정책에 먹인 바로 그 텐서를 넘겨 준다.
-                demo_go2.last_depth = depth_camera
-                # 5 스텝에 한 번만 인코더를 돌린다(학습/ play.py 와 같은 주기). 첫 스텝은
-                # common_step_counter 가 5 의 배수가 아닐 수 있으므로 무조건 한 번 채운다.
-                if depth_latent is None or demo_go2.env.unwrapped.common_step_counter % 5 == 0:
-                    obs_student = obs[:, :num_prop].clone()
-                    obs_student[:, 6:8] = 0
-                    depth_encoder_out = demo_go2.depth_encoder(depth_camera, obs_student)
-                    # 지금 encoder 는 depth embedding 32 차원만 낸다. heading 을 같이
-                    # 예측하던 시절의 체크포인트만 34 차원이라, 폭으로 갈라 준다.
-                    depth_latent = depth_encoder_out[:, :32]
-                    depth_yaw = depth_encoder_out[:, 32:] if depth_encoder_out.shape[1] > 32 else None
-                # latent 는 정책에 그대로 필요하다. 구 체크포인트의 yaw 예측은 어차피
-                # 아래 teleop 입력으로 덮이지만, 조종을 안 붙인 경우를 위해 그대로 둔다.
-                # 갱신이 없는 스텝에서는 직전 값을 그대로 쓴다(play.py 와 동일).
-                if depth_yaw is not None:
-                    obs[:, 6:8] = 1.5 * depth_yaw
-                demo_go2.apply_teleop_yaw(obs)
-                action = demo_go2.policy(obs, hist_encoding=True, scandots_latent=depth_latent)
+            priv_states_estimated = demo_go2.estimator.inference(obs[:, :num_prop])
+            obs[:, num_prop + num_scan : num_prop + num_scan + num_priv_explicit] = priv_states_estimated
+            demo_go2.apply_teleop_yaw(obs)
+            action = demo_go2.policy(obs, hist_encoding=True)
             demo_go2.track_record_camera()
             obs, _, _, extras = demo_go2.env.step(action)
             demo_go2.publish_frame()

@@ -3,41 +3,12 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""녹화 프레임에 붙이는 오버레이 유틸.
-
-play.py --multicam --panels 와 demo.py --with_depth 가 같은 depth 패널을 그리도록
-구현을 여기 한 곳에만 둔다. 양쪽에 복사해 두면 컬러맵이나 정규화 규칙이
-갈라져서, 같은 정책을 찍은 영상인데 depth 가 달라 보이게 된다.
-
-GT 및 Estimated height-scan 패널도 같은 이유로 여기 둔다.
-"""
+"""Scandots overlays for multicamera recordings."""
 
 from __future__ import annotations
 
 import cv2
 import numpy as np
-
-
-def depth_to_panel(depth: np.ndarray, height: int) -> np.ndarray:
-    """정책이 먹는 depth 한 장을 영상 오른쪽에 붙일 RGB 패널로 만든다.
-
-    observations.image_features 가 돌려주는 값은
-        depth_m / clipping_range - 0.5
-    로 정규화돼 있어 대략 [-0.5, 0.5] 범위다(가까울수록 작다). 여기에 0.5 를 더해
-    0..1 로 되돌린 뒤 8bit 로 만든다.
-
-    확대는 INTER_NEAREST 로 한다. 원본이 87x58 밖에 안 되는데 부드럽게 보간하면
-    정책이 실제로 보는 해상도보다 정보가 많아 보인다. 픽셀을 그대로 키워야
-    "이 정도로 성긴 입력을 보고 있다"가 눈에 들어온다.
-
-    TURBO 컬러맵을 씌운다. 회색조는 지형의 원근 차이가 잘 안 읽힌다.
-    """
-    d8 = np.clip((depth + 0.5) * 255.0, 0, 255).astype(np.uint8)
-    src_h, src_w = d8.shape
-    panel_w = int(round(height * src_w / src_h))
-    big = cv2.resize(d8, (panel_w, height), interpolation=cv2.INTER_NEAREST)
-    # applyColorMap 은 BGR 로 돌려주므로 채널을 뒤집어 RGB 로 맞춘다.
-    return cv2.applyColorMap(big, cv2.COLORMAP_TURBO)[:, :, ::-1]
 
 
 # scandots 값은 observations._get_heights() 의
@@ -56,7 +27,7 @@ def scandots_to_panel(
     robot_cell: tuple[float, float] | None = None,
     value_range: tuple[float, float] = SCANDOTS_VALUE_RANGE,
 ) -> np.ndarray:
-    """teacher 정책이 먹는 height scan 132 개를 탑뷰 패널로 만든다.
+    """Scandots 132 개를 탑뷰 패널로 만든다.
 
     Args:
         scandots: obs[num_prop : num_prop+num_scan] 한 env 분. 길이 n_y*n_x.
@@ -72,8 +43,7 @@ def scandots_to_panel(
     항상 "로봇 기준" 탑뷰다. 위쪽이 로봇 앞(+x), 왼쪽이 로봇의 왼쪽(+y)이 되게
     전치 후 두 축을 뒤집는다.
 
-    depth 패널과 같은 이유로 INTER_NEAREST 로 키운다. 12x11 짜리 성긴 격자라는
-    사실이 화면에 그대로 남아야 한다.
+    INTER_NEAREST 로 키워 12x11 짜리 성긴 격자를 그대로 보여 준다.
     """
     n_y, n_x = grid_shape
     grid = np.asarray(scandots, dtype=np.float32).reshape(n_y, n_x)
@@ -111,8 +81,8 @@ def scandots_to_panel(
 def label_panel(panel: np.ndarray, text: str) -> np.ndarray:
     """패널 왼쪽 상단에 라벨을 그린다.
 
-    GT/Estimated 처럼 나란히 붙는 패널을 구분하는 용도 (play.py --panels,
-    EM student). 검은 테두리 + 흰 글씨라 TURBO 어느 색 위에서도 읽힌다.
+    GT/Estimated 처럼 나란히 붙는 패널을 구분한다. 검은 테두리와 흰 글씨라
+    TURBO 어느 색 위에서도 읽힌다.
     """
     scale = max(0.4, panel.shape[0] / 540 * 0.6)
     org = (6, int(round(24 * scale / 0.6)))

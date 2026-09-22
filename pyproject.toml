@@ -31,7 +31,7 @@ known-first-party = ["parkour_isaaclab", "parkour_tasks", "scripts"]
 # Isaac Sim must launch before simulator-dependent modules are imported.
 "scripts/rsl_rl/{train,play,evaluation,eval_fixed_difficulty,demo}.py" = ["E402"]
 "list_envs.py" = ["E402"]
-"parkour_test/{test_camera,test_terrain_generator}.py" = ["E402"]
+"parkour_test/test_terrain_generator.py" = ["E402"]
 "deploy/tools/{dump_em_geometry,dump_isaaclab_joint_order,export_terrain}.py" = ["E402"]
 
 # Existing public re-export modules. Keep wildcard diagnostics enabled in

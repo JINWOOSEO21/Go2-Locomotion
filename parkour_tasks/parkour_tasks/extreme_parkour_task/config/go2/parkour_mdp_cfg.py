@@ -58,39 +58,6 @@ class TeacherObservationsCfg:
 
 
 @configclass
-class StudentObservationsCfg:
-    @configclass
-    class PolicyCfg(ObsGroup):
-        """Observations for policy group."""
-
-        extreme_parkour_observations = ObsTerm(
-            func=observations.ExtremeParkourObservations,
-            params={
-                "asset_cfg": SceneEntityCfg("robot"),
-                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
-                "parkour_name": "base_parkour",
-                "history_length": 10,
-            },
-            clip=(-100, 100),
-        )
-
-    @configclass
-    class DepthCameraPolicyCfg(ObsGroup):
-        depth_cam = ObsTerm(
-            func=observations.image_features,
-            params={
-                "sensor_cfg": SceneEntityCfg("depth_camera"),
-                "resize": (58, 87),
-                "buffer_len": 2,
-                "debug_vis": True,
-            },
-        )
-
-    policy: PolicyCfg = PolicyCfg()
-    depth_camera: DepthCameraPolicyCfg = DepthCameraPolicyCfg()
-
-
-@configclass
 class LidarObservationsCfg(TeacherObservationsCfg):
     """LiDAR 관측 구성.
 
@@ -130,17 +97,6 @@ class LidarObservationsCfg(TeacherObservationsCfg):
 # 이전에 저장된 Hydra 설정과 외부 import를 위한 호환 alias. 새 task 등록과
 # 실행 경로에서는 LidarObservationsCfg를 사용한다.
 EMStudentObservationsCfg = LidarObservationsCfg
-
-
-@configclass
-class StudentRewardsCfg:
-    reward_collision = RewTerm(
-        func=rewards.reward_collision,
-        weight=-0.0,
-        params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["base", ".*_calf", ".*_thigh"]),
-        },
-    )
 
 
 @configclass
@@ -349,15 +305,6 @@ class EventCfg:
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="base"),
             "com_range": {"x": (-0.02, 0.02), "y": (-0.02, 0.02), "z": (-0.02, 0.02)},
-        },
-    )
-    random_camera_position = EventTerm(
-        func=events.random_camera_position,
-        mode="startup",
-        params={
-            "sensor_cfg": SceneEntityCfg("depth_camera"),
-            "rot_noise_range": {"pitch": (-5, 5)},
-            "convention": "ros",
         },
     )
     push_by_setting_velocity = EventTerm(  # Okay

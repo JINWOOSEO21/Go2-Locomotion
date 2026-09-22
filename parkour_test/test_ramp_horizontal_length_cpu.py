@@ -149,14 +149,14 @@ class TestRampHorizontalLength(unittest.TestCase):
         )
         rows = next(keyword.value for keyword in generator.keywords if keyword.arg == "num_rows")
         self.assertEqual(ast.literal_eval(rows), 11)
-        student = REPO_ROOT / "parkour_tasks/parkour_tasks/extreme_parkour_task/config/go2/parkour_student_cfg.py"
+        scandots = REPO_ROOT / "parkour_tasks/parkour_tasks/extreme_parkour_task/config/go2/parkour_teacher_cfg.py"
         assignments = [
-            node for node in ast.walk(ast.parse(student.read_text()))
+            node for node in ast.walk(ast.parse(scandots.read_text()))
             if isinstance(node, ast.Assign)
             and any(isinstance(target, ast.Attribute) and target.attr == "num_rows" for target in node.targets)
         ]
-        # Training override plus the existing EVAL and PLAY overrides.
-        self.assertEqual([ast.literal_eval(node.value) for node in assignments], [11, 5, 1])
+        # Training inherits the generator's eleven levels; Eval and Play override it.
+        self.assertEqual([ast.literal_eval(node.value) for node in assignments], [5, 1])
 
     def test_stair_risers_at_all_eleven_levels(self):
         defaults = _class_field_values(CFG_PATH, "ExtremeParkourTrapezoidStairsTerrainCfg")

@@ -74,18 +74,6 @@ class TestTaskRegistry(unittest.TestCase):
                 "parkour_teacher_cfg:UnitreeGo2TeacherParkourEnvCfg_EVAL",
                 "rsl_teacher_ppo_cfg:UnitreeGo2ParkourTeacherPPORunnerCfg",
             ),
-            "Isaac-Extreme-Parkour-Depth-Unitree-Go2-Train-v0": (
-                "parkour_student_cfg:UnitreeGo2StudentParkourEnvCfg",
-                "rsl_student_ppo_cfg:UnitreeGo2ParkourStudentPPORunnerCfg",
-            ),
-            "Isaac-Extreme-Parkour-Depth-Unitree-Go2-Play-v0": (
-                "parkour_student_cfg:UnitreeGo2StudentParkourEnvCfg_PLAY",
-                "rsl_student_ppo_cfg:UnitreeGo2ParkourStudentPPORunnerCfg",
-            ),
-            "Isaac-Extreme-Parkour-Depth-Unitree-Go2-Eval-v0": (
-                "parkour_student_cfg:UnitreeGo2StudentParkourEnvCfg_EVAL",
-                "rsl_student_ppo_cfg:UnitreeGo2ParkourStudentPPORunnerCfg",
-            ),
             "Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Train-v0": (
                 "parkour_em_student_cfg:UnitreeGo2LidarParkourEnvCfg",
                 "rsl_em_student_ppo_cfg:UnitreeGo2ParkourLidarPPORunnerCfg",
@@ -100,8 +88,8 @@ class TestTaskRegistry(unittest.TestCase):
             ),
         }
 
-        self.assertEqual(len(registrations), 9)
-        self.assertEqual(len({registration["id"] for registration in registrations}), 9)
+        self.assertEqual(len(registrations), 6)
+        self.assertEqual(len({registration["id"] for registration in registrations}), 6)
         self.assertEqual({registration["id"] for registration in registrations}, set(expected_configs))
         self.assertTrue(all(registration["disable_env_checker"] for registration in registrations))
         self.assertTrue(
@@ -123,7 +111,6 @@ class TestTaskRegistry(unittest.TestCase):
         self.assertFalse(any("Teacher" in task_id or "Student" in task_id for task_id in task_ids))
 
     def test_demo_enables_cameras_for_sensor_input_tasks(self):
-        self.assertTrue(_demo_enables_cameras("Isaac-Extreme-Parkour-Depth-Unitree-Go2-Play-v0"))
         self.assertTrue(_demo_enables_cameras("Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0"))
         self.assertFalse(_demo_enables_cameras("Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Play-v0"))
         self.assertFalse(_demo_enables_cameras(None))

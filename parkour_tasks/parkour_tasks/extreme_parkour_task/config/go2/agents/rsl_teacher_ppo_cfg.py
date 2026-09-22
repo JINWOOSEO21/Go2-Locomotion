@@ -12,19 +12,14 @@ from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import 
 
 @configclass
 class UnitreeGo2ParkourTeacherPPORunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
+    input_mode = "scandots_input"
     num_steps_per_env = 24
     max_iterations = 50000
     save_interval = 100
     experiment_name = "unitree_go2_parkour"
-    run_subdir = "trained_v1.4"
+    run_name = "scandots"
+    load_run = ".*_scandots"
     empirical_normalization = False
-    # student 와 같은 규약. run 폴더는 teacher_pretrained 로 고정하고, 그 안에 지금 쓰는
-    # 체크포인트 model_*.pt 를 하나만 둔다. 후보는 weight_candidates/ 에 넣어 두고
-    # scripts/rsl_rl/swap_checkpoint.py 로 맞바꿔 가며 시험한다.
-    #
-    # 주의: train.py 에서 --resume 으로 '진행 중이던 학습'을 이어받으려면 이 값 때문에
-    # teacher_pretrained 를 보게 되므로, --load_run <타임스탬프 폴더> 를 함께 줘야 한다.
-    load_run = "teacher_pretrained"
     policy = ParkourRslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_hidden_dims=[512, 256, 128],
@@ -37,7 +32,6 @@ class UnitreeGo2ParkourTeacherPPORunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
         ),
     )
     estimator = ParkourRslRlEstimatorCfg(hidden_dims=[128, 64])
-    depth_encoder = None
     algorithm = ParkourRslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
         use_clipped_value_loss=True,

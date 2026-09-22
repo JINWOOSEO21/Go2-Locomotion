@@ -3,16 +3,14 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Play an RSL-RL checkpoint and optionally record videos.
+"""Play an RSL-RL checkpoint and optionally record one video per environment.
 
---video records a single viewport video in <load_run>/videos/play/.
---multicam records one video per environment in <load_run>/videos/multicam/
-(or --out_dir). Both flags may be used together; output paths are unchanged.
+--multicam writes the videos directly to the selected checkpoint run's videos/
+directory (or --out_dir).
 
 --panels requires --multicam and automatically shows the policy's terrain input:
-  depth policy: depth camera input used by the encoder;
-  GT-scan policy: GT scandots;
-  elevation-map policy: GT and Estimated scandots side by side.
+  Scandots policy: GT scandots;
+  LiDAR policy: GT and Estimated scandots side by side.
 
 The viewport starts with viewer.env_index=0; play has no CLI environment selector.
 In the GUI, Numpad 7/9 change the tracked environment.
@@ -33,10 +31,7 @@ from isaaclab.app import AppLauncher
 import cli_args  # isort: skip
 
 # add argparse arguments
-parser = argparse.ArgumentParser(description="Play an RL agent with RSL-RL.")
-parser.add_argument(
-    "--video", action="store_true", default=False, help="Record a single viewport video during playback."
-)
+parser = argparse.ArgumentParser(description="Play an RL agent with RSL-RL.", allow_abbrev=False)
 parser.add_argument("--video_length", type=int, default=500, help="Length of the recorded video (in steps).")
 parser.add_argument(
     "--multicam",
@@ -52,15 +47,15 @@ parser.add_argument(
     "--out_dir",
     type=str,
     default=None,
-    help="--multicam only. Directory to write the per-env mp4 files into (default: <load_run dir>/videos/multicam).",
+    help="--multicam only. Directory to write the per-env mp4 files into (default: <checkpoint run>/videos).",
 )
 parser.add_argument("--fps", type=int, default=50, help="--multicam only. Output video fps (sim is 1/step_dt = 50).")
 parser.add_argument(
     "--panels",
     action="store_true",
     help=(
-        "--multicam only. Show the policy's terrain input: depth for depth policies, "
-        "GT scandots for GT-scan policies, or GT and Estimated scandots for elevation-map policies."
+        "--multicam only. Show GT scandots for the Scandots policy, or GT and Estimated scandots "
+        "for the LiDAR policy."
     ),
 )
 parser.add_argument(
@@ -127,9 +122,8 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 if args_cli.panels and not args_cli.multicam:
     parser.error("--panels requires --multicam.")
-# always enable cameras to record video
-# --multicam 은 TiledCamera 를 쓰므로 RTX 렌더가 필요하다. --video 의 뷰포트 녹화도 마찬가지다.
-if args_cli.video or args_cli.multicam:
+# --multicam uses TiledCamera and therefore requires RTX rendering.
+if args_cli.multicam:
     args_cli.enable_cameras = True
 
 # launch omniverse app
@@ -148,7 +142,6 @@ import isaaclab_tasks  # noqa: F401
 import torch
 from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
 from isaaclab.utils.assets import retrieve_file_path
-from isaaclab.utils.dict import print_dict
 from isaaclab.utils.math import quat_from_euler_xyz, quat_mul
 from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 from isaaclab_tasks.utils import parse_env_cfg
@@ -157,12 +150,7 @@ from parkour_isaaclab.terrains.extreme_parkour.config.parkour import apply_terra
 from parkour_tasks.default_cfg import RECORD_CAMERA_CFG
 from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
 from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
-from scripts.rsl_rl.exporter import (
-    export_deploy_policy_as_jit,
-    export_deploy_policy_as_onnx,
-    export_teacher_policy_as_jit,
-    export_teacher_policy_as_onnx,
-)
+from scripts.rsl_rl.exporter import export_teacher_policy_as_jit, export_teacher_policy_as_onnx
 from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
 from scripts.rsl_rl.multicam_recorder import PerEnvVideoRecorder
 from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
@@ -256,21 +244,15 @@ def apply_terrain_override(env_cfg):
         )
 
 
-def snapshot_policy_panels(obs, num_prop, num_scan, *, depth=None, estimated_obs=None, gt_scandots=None):
+def snapshot_policy_panels(obs, num_prop, num_scan, *, gt_scandots=None):
     """Copy the terrain inputs before env.step can mutate their backing buffers."""
-    if depth is not None:
-        return depth.detach().cpu().numpy().copy(), None
-
     scan = slice(num_prop, num_prop + num_scan)
     if gt_scandots is not None:
-        return None, [
+        return [
             ("GT", gt_scandots.detach().cpu().numpy().copy()),
             ("Estimated", obs[:, scan].detach().cpu().numpy().copy()),
         ]
-    panels = [("GT", obs[:, scan].detach().cpu().numpy().copy())]
-    if estimated_obs is not None:
-        panels.append(("Estimated", estimated_obs[:, scan].detach().cpu().numpy().copy()))
-    return None, panels
+    return [("GT", obs[:, scan].detach().cpu().numpy().copy())]
 
 
 def main():
@@ -309,31 +291,15 @@ def main():
         # (승격 전이라면) 최근 하위 run 폴더에서 찾는다.
         resume_path = get_checkpoint_path_with_fallback(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
-    # 녹화물(videos/)은 checkpoint 가 하위 run 폴더에서 나왔더라도 load_run 폴더
-    # (student_pretrained/ 또는 teacher_pretrained/) 아래에 모은다. --checkpoint 로
-    # 임의 경로를 줬거나 load_run 폴더가 없으면 기존대로 checkpoint 옆에 둔다.
-    log_dir = os.path.join(log_root_path, str(agent_cfg.load_run))
-    if not os.path.isdir(log_dir):
-        log_dir = os.path.dirname(resume_path)
+    # Outputs belong to the run that contains the checkpoint actually selected above.
+    log_dir = os.path.dirname(resume_path)
 
     # create isaac environment
-    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    env = gym.make(args_cli.task, cfg=env_cfg)
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
-
-    # wrap for video recording
-    if args_cli.video:
-        video_kwargs = {
-            "video_folder": os.path.join(log_dir, "videos", "play"),
-            "step_trigger": lambda step: step == 0,
-            "video_length": args_cli.video_length,
-            "disable_logger": True,
-        }
-        print("[INFO] Recording viewport video during playback.")
-        print_dict(video_kwargs, nesting=4)
-        env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
     # wrap around environment for rsl-rl
     env = ParkourRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
@@ -347,48 +313,20 @@ def main():
 
     estimator = ppo_runner.get_estimator_inference_policy(device=env.device)
     is_lidar = getattr(agent_cfg, "input_mode", "scandots_input") == "lidar_input"
-    if agent_cfg.algorithm.class_name == "DistillationWithExtractor":
-        policy = ppo_runner.get_inference_depth_policy(device=env.unwrapped.device)
-        depth_encoder = ppo_runner.get_depth_encoder_inference_policy(device=env.device)
-        policy_nn = ppo_runner.alg.depth_actor
-        export_model_dir = os.path.join(os.path.dirname(resume_path), "exported_deploy")
-        export_deploy_policy_as_jit(
-            policy_nn, estimator, depth_encoder, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt"
-        )
-        export_deploy_policy_as_onnx(
-            policy_nn,
-            estimator,
-            depth_encoder,
-            agent_cfg,
-            normalizer=ppo_runner.obs_normalizer,
-            path=export_model_dir,
-            filename="policy.onnx",
-        )
-
-    elif agent_cfg.algorithm.class_name == "EMDistillation":
-        # elevation-map student: depth encoder 가 없고 depth_actor 만 있다.
-        # 배포용 export 는 EM 파이프라인(센서→em_cupy→샘플)이 정책 밖에 살아서
-        # 아직 정의되지 않았다 — 재생/평가만 지원한다.
-        policy = ppo_runner.get_inference_depth_policy(device=env.unwrapped.device)
-        print("[INFO] EMDistillation: JIT/ONNX export 는 지원하지 않는다 (EM 파이프라인이 정책 밖).")
+    policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
+    if is_lidar:
+        print("[INFO] LiDAR PPO playback: sensor/map preprocessing is external; automatic deployment export is skipped.")
     else:
-        policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
-        if is_lidar:
-            print("[INFO] LiDAR PPO playback: sensor/map preprocessing is external; automatic deployment export is skipped.")
-        else:
-            policy_nn = ppo_runner.alg.policy
-            export_model_dir = os.path.join(os.path.dirname(resume_path), "exported_teacher")
-            export_teacher_policy_as_jit(policy_nn, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt")
-            export_teacher_policy_as_onnx(
-                policy_nn, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
-            )
+        policy_nn = ppo_runner.alg.policy
+        export_model_dir = os.path.join(os.path.dirname(resume_path), "exported_policy")
+        export_teacher_policy_as_jit(policy_nn, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt")
+        export_teacher_policy_as_onnx(
+            policy_nn, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
+        )
 
-    is_em = agent_cfg.algorithm.class_name == "EMDistillation"
-    is_distill = agent_cfg.algorithm.class_name in ("DistillationWithExtractor", "EMDistillation")
-    record_depth = args_cli.panels and is_distill and not is_em
-    record_scandots = args_cli.panels and not record_depth
+    record_scandots = args_cli.panels
     if args_cli.panels:
-        content = "Depth" if record_depth else "GT | Estimated" if is_em or is_lidar else "GT"
+        content = "GT | Estimated" if is_lidar else "GT"
         print(f"[INFO] --panels: {content}")
 
     dt = env.unwrapped.step_dt
@@ -402,8 +340,7 @@ def main():
     # --multicam 녹화기. 지형 이름은 리셋 후에야 확정되므로 첫 관측 뒤에 만든다.
     recorder = None
     if args_cli.multicam:
-        # --video 와 같은 규칙: load_run 폴더(student_pretrained/) 아래 videos/ 에 모은다.
-        out_dir = args_cli.out_dir or os.path.join(log_dir, "videos", "multicam")
+        out_dir = args_cli.out_dir or os.path.join(log_dir, "videos")
         recorder = PerEnvVideoRecorder(env, out_dir, fps=args_cli.fps)
         if record_scandots:
             grid = recorder.scandots_grid
@@ -417,7 +354,6 @@ def main():
                 record_scandots = False
 
     timestep = 0
-    panel_depth = None
     # mp4 는 moov atom 을 close() 시점에 쓴다. 중간에 죽으면 파일이 통째로 재생 불가가
     # 되므로 어떤 경로로 빠져나가든 반드시 close 되게 감싼다.
     try:
@@ -425,56 +361,17 @@ def main():
         while simulation_app.is_running():
             start_time = time.time()
             # run everything in inference mode
-            if not is_distill:
-                with torch.inference_mode():
-                    # agent stepping
-                    obs[:, num_prop + num_scan : num_prop + num_scan + num_priv_explicit] = estimator.inference(
-                        obs[:, :num_prop]
-                    )
-                    actions = policy(obs, hist_encoding=True)
-                # env stepping
-            elif is_em:
-                # EM student: obs 의 scan 구간만 em_scan(10Hz 갱신, 사이 step 은 최신값)
-                # 으로 갈아끼우고 depth_actor 의 자체 scan_encoder 가 인코딩한다.
-                em_scan = extras["observations"]["em_scan"].to(env.device)
-                with torch.inference_mode():
-                    obs_em = obs.clone()
-                    obs_em[:, num_prop : num_prop + num_scan] = em_scan
-                    # 학습(learn_em)·배포와 동일: priv_explicit 은 estimator 추정값
-                    obs_em[:, num_prop + num_scan : num_prop + num_scan + num_priv_explicit] = estimator.inference(
-                        obs_em[:, :num_prop]
-                    )
-                    actions = policy(obs_em, hist_encoding=True)
-            else:
-                depth_camera = extras["observations"]["depth_camera"].to(env.device)
-                with torch.inference_mode():
-                    if env.unwrapped.common_step_counter % 5 == 0:
-                        obs_student = obs[:, :num_prop].clone()
-                        obs_student[:, 6:8] = 0
-                        depth_encoder_out = depth_encoder(depth_camera, obs_student)
-                        if record_depth:
-                            # Keep the input that produced the held latent, even if the
-                            # sensor buffer changes before the next encoder update.
-                            panel_depth = depth_camera.detach().clone()
-                        # 지금 encoder 는 depth embedding 32 차원만 낸다. heading 을
-                        # 예측하던 시절의 체크포인트는 34 차원이라 뒤 2 개가 더 붙는데,
-                        # 그건 재생 호환을 위해 폭으로 갈라서 예전처럼 obs 에 덮어쓴다.
-                        depth_latent = depth_encoder_out[:, :32]
-                        yaw = depth_encoder_out[:, 32:] if depth_encoder_out.shape[1] > 32 else None
-                    if yaw is not None:
-                        # 34 차원 구 체크포인트 전용 경로. 새 정책은 teacher 와 똑같이
-                        # obs 의 oracle heading 을 그대로 쓰므로 여기서 덮어쓰지 않는다.
-                        obs[:, 6:8] = 1.5 * yaw
-                    # obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = estimator.inference(obs[:, :num_prop])
-                    actions = policy(obs, hist_encoding=True, scandots_latent=depth_latent)
-            depth_np, scandots_np = None, None
-            if record_depth or record_scandots:
-                depth_np, scandots_np = snapshot_policy_panels(
+            with torch.inference_mode():
+                obs[:, num_prop + num_scan : num_prop + num_scan + num_priv_explicit] = estimator.inference(
+                    obs[:, :num_prop]
+                )
+                actions = policy(obs, hist_encoding=True)
+            scandots_np = None
+            if record_scandots:
+                scandots_np = snapshot_policy_panels(
                     obs,
                     num_prop,
                     num_scan,
-                    depth=panel_depth if record_depth else None,
-                    estimated_obs=obs_em if is_em else None,
                     gt_scandots=extras["observations"]["gt_scandots"] if is_lidar else None,
                 )
             # 스텝 중에 렌더가 일어나므로 그 전에 카메라를 현재 로봇 위치로 옮겨둔다.
@@ -483,11 +380,11 @@ def main():
             obs, _, _, extras = env.step(actions)
 
             if recorder is not None:
-                if not recorder.capture(depth=depth_np, scandots=scandots_np):
+                if not recorder.capture(scandots=scandots_np):
                     # 아직 카메라 출력이 안 나왔다. 프레임 수로 세지 않는다.
                     continue
 
-            if args_cli.video or recorder is not None:
+            if recorder is not None:
                 timestep += 1
                 # Exit the play loop after recording one video
                 if timestep >= args_cli.video_length:

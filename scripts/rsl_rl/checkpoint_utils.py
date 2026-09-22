@@ -1,12 +1,7 @@
-"""student_pretrained 규약의 체크포인트 탐색.
+"""Find checkpoints in a selected run, with fallback for older nested log layouts.
 
-규약 (rsl_student_ppo_cfg.py 참고):
-  student_pretrained/model_*.pt            <- 재생/평가용으로 승격된 checkpoint (우선)
-  student_pretrained/weight_candidates/    <- 대기 중인 후보들 (스캔 대상 아님)
-  student_pretrained/<timestamp>/          <- run_subdir 로 떨어지는 학습 산출물
-
-승격된 최상위 checkpoint 가 아직 없어도 (학습 직후 등) play/resume 이 바로
-동작하도록, 최상위에 없으면 하위 run 폴더 중 가장 최근 것으로 내려가 찾는다.
+New runs are written directly beneath the experiment directory. Existing nested
+directories remain readable without moving their checkpoint files.
 """
 
 import os

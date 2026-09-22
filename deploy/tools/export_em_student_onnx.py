@@ -1,17 +1,11 @@
-"""EM student(v1.3) 정책을 배포용 ONNX 로 뽑는다.
-
-왜 새로 쓰나
-------------
-`scripts/rsl_rl/exporter.py` 에는 teacher 용과 depth student 용 exporter 만 있고,
-EM student(EMDistillation) 는 play.py 가 아예 "JIT/ONNX export 는 지원하지 않는다"
-고 찍고 넘어간다. 배포에는 이게 있어야 한다.
+"""LiDAR PPO 정책을 배포용 ONNX로 내보낸다.
 
 시그니처
 -------------------------------------------
     inputs : prop(1,53)  scan(1,132)  hist(1,530)
     output : actions(1,12)
 
-학습 때 정책이 먹는 obs 는 753 차원이지만 통짜로 뽑지 않는다. 이유:
+정책의 전체 observation은 753차원이지만, 배포 인터페이스는 세 입력으로 나눈다.
   - obs[194:223] 의 priv_latent 29 칸은 `hist_encoding=True` 경로에서 아예 읽히지
     않는 죽은 입력이다. 배포 코드가 채워 줄 이유가 없다.
   - 통짜 벡터는 배포 쪽이 슬라이스 경계를 틀릴 여지만 남긴다. 입력을 셋으로 쪼개면
@@ -34,10 +28,10 @@ Isaac Sim 이 필요해진다. 가중치 shape 만으로 거의 모든 치수가
 둘 다 CLI 플래그로 두고 기본값을 학습 cfg 값(elu / False)으로 뒀다.
 내장 검증은 이 설정이 학습 때와 같은지 확인하지 못하므로 학습 설정과 맞춰야 한다.
 
-실행 (Isaac Sim 불필요 — torch + rsl_rl 만 있으면 된다)
--------------------------------------------------------
+실행 (Isaac Sim 불필요)
+----------------------
     python deploy/tools/export_em_student_onnx.py \
-        --checkpoint logs/rsl_rl/unitree_go2_parkour/student_pretrained/trained_v1.3~30K/model_29998.pt
+        --checkpoint logs/rsl_rl/unitree_go2_parkour/<timestamp>_lidar/model_29999.pt
 """
 
 from __future__ import annotations
@@ -61,8 +55,33 @@ from rsl_rl.utils import resolve_nn_activation  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# 1) 체크포인트 가중치 shape 에서 망 구조를 복원한다
+# 1) PPO 체크포인트에서 actor 가중치를 분리하고 망 구조를 복원한다
 # ---------------------------------------------------------------------------
+def validate_checkpoint(ckpt: dict) -> None:
+    """Fail fast for checkpoints that this deployment graph cannot represent."""
+    required = {"model_state_dict", "estimator_state_dict"}
+    missing = sorted(required.difference(ckpt))
+    if missing:
+        raise ValueError(f"PPO checkpoint is missing required keys: {missing}")
+    if ckpt.get("algorithm") != "PPOWithExtractor":
+        raise ValueError("checkpoint algorithm must be 'PPOWithExtractor'")
+    if ckpt.get("input_mode") != "lidar_input":
+        raise ValueError("checkpoint input_mode must be 'lidar_input'")
+    if "obs_norm_state_dict" in ckpt or "privileged_obs_norm_state_dict" in ckpt:
+        raise ValueError("empirical observation normalization is not supported by this split-input exporter")
+    if "depth_actor_state_dict" in ckpt or "depth_encoder_state_dict" in ckpt:
+        raise ValueError("legacy non-PPO checkpoints are not supported")
+
+
+def extract_actor_state_dict(model_sd: dict) -> dict:
+    """Extract ``Actor`` parameters from an ``ActorCriticRMA`` state dictionary."""
+    prefix = "actor."
+    actor_sd = {key[len(prefix) :]: value for key, value in model_sd.items() if key.startswith(prefix)}
+    if not actor_sd:
+        raise ValueError("model_state_dict contains no 'actor.*' parameters")
+    return actor_sd
+
+
 def infer_arch(actor_sd: dict, est_sd: dict) -> dict:
     def linear_out_dims(sd, prefix):
         """nn.Sequential 안의 Linear 출력 폭을 인덱스 순서대로 모은다."""
@@ -118,7 +137,7 @@ def infer_arch(actor_sd: dict, est_sd: dict) -> dict:
 # ---------------------------------------------------------------------------
 # 2) 배포용 래퍼: 입력 셋을 받아 학습 때와 '같은' Actor.forward 를 부른다
 # ---------------------------------------------------------------------------
-class EMStudentPolicy(nn.Module):
+class LidarPolicy(nn.Module):
     """prop/scan/hist -> actions.
 
     forward 를 새로 구현하지 않고 obs 벡터를 재조립해 `Actor.forward` 를 그대로
@@ -142,7 +161,7 @@ class EMStudentPolicy(nn.Module):
         return self.actor(obs, hist_encoding=True, scandots_latent=None)
 
 
-def build_policy(ckpt: dict, arch: dict, activation: str, tanh_encoder_output: bool) -> EMStudentPolicy:
+def build_policy(ckpt: dict, arch: dict, activation: str, tanh_encoder_output: bool) -> LidarPolicy:
     act_module = resolve_nn_activation(activation)
     actor = Actor(
         arch["num_actions"],
@@ -168,10 +187,10 @@ def build_policy(ckpt: dict, arch: dict, activation: str, tanh_encoder_output: b
         activation=activation,
     )
     # strict=True: 키가 하나라도 남거나 모자라면 실패한다. 조용한 부분 로드를 막는다.
-    actor.load_state_dict(ckpt["depth_actor_state_dict"], strict=True)
+    actor.load_state_dict(extract_actor_state_dict(ckpt["model_state_dict"]), strict=True)
     estimator.load_state_dict(ckpt["estimator_state_dict"], strict=True)
 
-    policy = EMStudentPolicy(actor, estimator, arch["num_priv_latent"])
+    policy = LidarPolicy(actor, estimator, arch["num_priv_latent"])
     policy.eval()
     for p in policy.parameters():
         p.requires_grad_(False)
@@ -182,15 +201,8 @@ def build_policy(ckpt: dict, arch: dict, activation: str, tanh_encoder_output: b
 # 3) 학습/재생 경로와 수치가 같은지 확인 (torch 안에서)
 # ---------------------------------------------------------------------------
 @torch.no_grad()
-def check_against_production_path(policy: EMStudentPolicy, arch: dict, n: int = 8):
-    """play.py 의 EM 분기와 똑같이 obs 를 만들어 돌린 결과와 래퍼 출력을 비교한다.
-
-    play.py:616-631 이 하는 일:
-        obs_em = obs.clone()
-        obs_em[:, prop:prop+scan] = em_scan
-        obs_em[:, prop+scan : prop+scan+priv] = estimator.inference(obs_em[:, :prop])
-        actions = depth_actor(obs_em, hist_encoding=True)
-    """
+def check_against_production_path(policy: LidarPolicy, arch: dict, n: int = 8):
+    """Compare the split-input graph with the PPO actor inference path."""
     P, S, H = arch["num_prop"], arch["num_scan"], arch["num_hist"] * arch["num_prop"]
     PE, PL = arch["num_priv_explicit"], arch["num_priv_latent"]
     g = torch.Generator().manual_seed(0)
@@ -211,14 +223,16 @@ def check_against_production_path(policy: EMStudentPolicy, arch: dict, n: int = 
 
     out = policy(prop, scan, hist)
     diff = (ref - out).abs().max().item()
-    assert diff == 0.0, f"래퍼가 학습 경로와 다르다 (max|diff|={diff:.3e})"
-    print(f"  [check] 학습/재생 경로와 비트 단위 동일 (max|diff|={diff:.1e})")
+    # The two paths assemble the same actor input. Float32 GEMM kernels can still
+    # differ by an ULP when another test or caller changes PyTorch backend settings.
+    torch.testing.assert_close(out, ref, rtol=1.0e-6, atol=1.0e-7)
+    print(f"  [check] split 입력과 PPO actor 출력 일치 (max|diff|={diff:.1e})")
     return prop, scan, hist, out
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--checkpoint", required=True, help="EM student 체크포인트 (.pt)")
+    ap.add_argument("--checkpoint", required=True, help="LiDAR PPO checkpoint (.pt)")
     ap.add_argument("--out-dir", default=None, help="기본값: <체크포인트 폴더>/exported")
     ap.add_argument("--activation", default="elu", help="가중치로 복원 불가 — 학습 cfg 값 (기본 elu)")
     ap.add_argument("--tanh-encoder-output", action="store_true", help="가중치로 복원 불가 — 학습 cfg 는 False")
@@ -226,14 +240,13 @@ def main():
     args = ap.parse_args()
 
     ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-    for key in ("depth_actor_state_dict", "estimator_state_dict"):
-        if key not in ckpt:
-            raise SystemExit(
-                f"체크포인트에 '{key}' 가 없다. EM student(EMDistillation) 산출물이 맞는지 확인할 것. "
-                f"가진 키: {list(ckpt)}"
-            )
+    try:
+        validate_checkpoint(ckpt)
+        actor_sd = extract_actor_state_dict(ckpt["model_state_dict"])
+    except ValueError as exc:
+        raise SystemExit(f"Unsupported checkpoint: {exc}") from exc
 
-    arch = infer_arch(ckpt["depth_actor_state_dict"], ckpt["estimator_state_dict"])
+    arch = infer_arch(actor_sd, ckpt["estimator_state_dict"])
     print("체크포인트에서 복원한 구조:")
     for k, v in arch.items():
         print(f"  {k:24s} = {v}")

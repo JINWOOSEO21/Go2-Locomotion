@@ -17,10 +17,7 @@ import cli_args  # isort: skip
 
 
 # add argparse arguments
-parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
-parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
-parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
-parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
+parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.", allow_abbrev=False)
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
@@ -41,6 +38,9 @@ cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
+unknown_options = [arg for arg in hydra_args if arg.startswith("-")]
+if unknown_options:
+    parser.error(f"unrecognized arguments: {' '.join(unknown_options)}")
 if args_cli.max_iterations is not None and args_cli.max_iterations <= 0:
     parser.error("--max_iterations must be positive.")
 if args_cli.init_checkpoint:
@@ -49,10 +49,6 @@ if args_cli.init_checkpoint:
     args_cli.init_checkpoint = os.path.abspath(os.path.expanduser(args_cli.init_checkpoint))
     if not os.path.isfile(args_cli.init_checkpoint):
         parser.error(f"Initialization checkpoint does not exist: {args_cli.init_checkpoint}")
-
-# always enable cameras to record video
-if args_cli.video:
-    args_cli.enable_cameras = True
 
 # clear out sys.argv for Hydra
 sys.argv = [sys.argv[0]] + hydra_args
@@ -97,7 +93,6 @@ from isaaclab.envs import (
     ManagerBasedRLEnvCfg,
     multi_agent_to_single_agent,
 )
-from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_yaml
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
@@ -127,11 +122,8 @@ def main(
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
-    # student 씬의 record_camera(TiledCamera)는 play.py --multicam / demo.py 녹화 전용이다.
-    # 학습에서는 이 카메라의 프레임을 읽는 곳이 없는데도, 씬에 있으면 --enable_cameras
-    # 없이는 스폰 단계에서 RuntimeError 가 나고, 켜면 env 수만큼 960x540 렌더가
-    # 매 스텝 돌아가 VRAM 과 속도를 잡아먹는다. 학습 경로에서는 항상 떼어낸다.
-    # (--video 녹화는 뷰포트(render_mode="rgb_array")를 쓰므로 이 카메라와 무관하다.)
+    # The tiled camera is used by play.py --multicam only. Training never reads it,
+    # so remove it to avoid allocating a renderer for every environment.
     if getattr(env_cfg.scene, "record_camera", None) is not None:
         env_cfg.scene.record_camera = None
     agent_cfg.max_iterations = (
@@ -178,57 +170,20 @@ def main(
     if agent_cfg.run_name:
         log_dir += f"_{agent_cfg.run_name}"
 
-    # run_subdir 는 쓰기 경로에만 끼운다. 아래 get_checkpoint_path 의 뿌리는 여전히
-    # log_root_path 라서, student 산출물을 student_pretrained/ 아래로 모으면서도
-    # load_run="teacher_pretrained" 로 teacher 체크포인트를 그대로 찾아온다.
-    run_subdir = getattr(agent_cfg, "run_subdir", None)
-    if run_subdir:
-        log_dir = os.path.join(run_subdir, log_dir)
-
     log_dir = os.path.join(log_root_path, log_dir)
 
     # create isaac environment
-    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    env = gym.make(args_cli.task, cfg=env_cfg)
 
     # # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
 
-    # save resume path before creating a new log_dir
-    # (EMDistillation 은 elevation-map student — teacher 출발점 규약을 그대로 따른다)
-    _distill_classes = ("DistillationWithExtractor", "EMDistillation")
-    if agent_cfg.resume or agent_cfg.algorithm.class_name in _distill_classes:
-        load_run, load_checkpoint = agent_cfg.load_run, agent_cfg.load_checkpoint
-        # distillation 의 출발점은 teacher 다. agent_cfg.load_run 은 play/evaluation 이
-        # 집어올 student 를 가리키므로 그대로 쓰면 student 를 이어 학습하게 된다.
-        # --resume 으로 student 학습을 이어가는 경우와 --load_run 을 손으로 준 경우는
-        # 사용자의 지정이 이기게 둔다.
-        if (
-            agent_cfg.algorithm.class_name in _distill_classes
-            and not agent_cfg.resume
-            and args_cli.load_run is None
-            and getattr(agent_cfg, "distill_load_run", None)
-        ):
-            load_run = agent_cfg.distill_load_run
-            if args_cli.checkpoint is None and agent_cfg.distill_load_checkpoint:
-                load_checkpoint = agent_cfg.distill_load_checkpoint
-            print(f"[INFO] Distillation source (teacher): run='{load_run}', checkpoint='{load_checkpoint}'")
-        # student_pretrained/ 바로 아래의 승격된 checkpoint 를 우선하고, 없으면
-        # (승격 전이라면) 최근 하위 run 폴더에서 찾는다. teacher 출발점처럼 최상위에
-        # checkpoint 가 있는 경우는 기존 get_checkpoint_path 와 동작이 같다.
-        resume_path = get_checkpoint_path_with_fallback(log_root_path, load_run, load_checkpoint)
-
-    # # wrap for video recording
-    if args_cli.video:
-        video_kwargs = {
-            "video_folder": os.path.join(log_dir, "videos", "train"),
-            "step_trigger": lambda step: step % args_cli.video_interval == 0,
-            "video_length": args_cli.video_length,
-            "disable_logger": True,
-        }
-        print("[INFO] Recording videos during training.")
-        print_dict(video_kwargs, nesting=4)
-        env = gym.wrappers.RecordVideo(env, **video_kwargs)
+    # Resolve a checkpoint only when continuing an existing PPO run.
+    if agent_cfg.resume:
+        resume_path = get_checkpoint_path_with_fallback(
+            log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint
+        )
 
     # wrap around environment for rsl-rl
     env = ParkourRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
@@ -240,7 +195,7 @@ def main(
     if args_cli.init_checkpoint:
         print(f"[INFO]: Initializing PPO weights from: {args_cli.init_checkpoint}")
         runner.load(args_cli.init_checkpoint, warm_start=True)
-    elif agent_cfg.resume or agent_cfg.algorithm.class_name in _distill_classes:
+    elif agent_cfg.resume:
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         # 학습 재개에서만 지형 커리큘럼까지 되살린다. 체크포인트에 terrain_levels 가

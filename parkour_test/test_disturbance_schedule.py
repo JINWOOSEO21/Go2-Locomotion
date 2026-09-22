@@ -80,8 +80,7 @@ class DisturbanceScheduleTest(unittest.TestCase):
     def test_checkpoint_schedule_resumes_then_a_new_learn_call_restarts(self):
         runner = _ScheduleRunner(self.namespace)
         runner._restore_disturbance_schedule(
-            {"disturbance_schedule": {"total_iterations": 10, "completed_iterations": 4}},
-            starts_distillation_from_teacher=False,
+            {"disturbance_schedule": {"total_iterations": 10, "completed_iterations": 4}}
         )
         runner._begin_disturbance_schedule(100)
         self.assertEqual(runner.env.unwrapped.disturbance_scale, 0.6)
@@ -91,31 +90,29 @@ class DisturbanceScheduleTest(unittest.TestCase):
         self.assertEqual(runner.env.unwrapped.disturbance_scale, 0.2)
         self.assertEqual(runner._disturbance_schedule_total_iterations, 5)
 
-    def test_teacher_to_student_starts_a_fresh_schedule(self):
+    def test_checkpoint_without_schedule_starts_a_fresh_schedule(self):
         runner = _ScheduleRunner(self.namespace)
-        runner._restore_disturbance_schedule(
-            {"disturbance_schedule": {"total_iterations": 10, "completed_iterations": 9}},
-            starts_distillation_from_teacher=True,
-        )
+        runner._restore_disturbance_schedule({})
         runner._begin_disturbance_schedule(5)
         self.assertEqual(runner.env.unwrapped.disturbance_scale, 0.2)
         self.assertEqual(runner._disturbance_schedule_completed_iterations, 0)
 
-    def test_all_learning_loops_apply_and_advance_the_schedule(self):
+    def test_ppo_learning_loop_applies_and_advances_the_schedule(self):
         tree = ast.parse(RUNNER_PATH.read_text())
         runner_class = next(
             node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "OnPolicyRunnerWithExtractor"
         )
         methods = {method.name: method for method in runner_class.body if isinstance(method, ast.FunctionDef)}
-        for method_name in ("learn_rl", "learn_vision", "learn_em"):
-            calls = [
-                node.func.attr
-                for node in ast.walk(methods[method_name])
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-            ]
-            self.assertIn("_begin_disturbance_schedule", calls)
-            self.assertIn("_apply_disturbance_schedule", calls)
-            self.assertIn("_advance_disturbance_schedule", calls)
+        calls = [
+            node.func.attr
+            for node in ast.walk(methods["learn_rl"])
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        ]
+        self.assertIn("_begin_disturbance_schedule", calls)
+        self.assertIn("_apply_disturbance_schedule", calls)
+        self.assertIn("_advance_disturbance_schedule", calls)
+        self.assertNotIn("learn_vision", methods)
+        self.assertNotIn("learn_em", methods)
 
 
 if __name__ == "__main__":
