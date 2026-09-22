@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import torch
 
 
@@ -29,6 +30,7 @@ def _identity_matrices(quaternions: torch.Tensor) -> torch.Tensor:
 def _extract_method(name: str):
     tree = ast.parse(OBSERVATIONS_FILE.read_text(encoding="utf-8"))
     namespace = {
+        "np": np,
         "torch": torch,
         "matrix_from_quat": _identity_matrices,
         "euler_xyz_from_quat": lambda quat: tuple(torch.zeros(quat.shape[0]) for _ in range(3)),

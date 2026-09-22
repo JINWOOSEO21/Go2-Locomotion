@@ -10,7 +10,7 @@ Unitree Go2 parkour locomotion in IsaacLab, with two primary terrain-input paths
 | Input path | Terrain input consumed by the policy | Current training method |
 | --- | --- | --- |
 | `scandots_input` | 132 ground-truth height samples (12 × 11 scandots) from the simulator | PPO (`PPOWithExtractor`) |
-| `lidar_input` | 132 height samples from an elevation map built using L1 LiDAR point clouds and noisy odometry | Action imitation (`EMDistillation`) initialized from a GT-scan policy |
+| `lidar_input` | 132 height samples from an elevation map built using L1 LiDAR point clouds and noisy odometry | PPO (`PPOWithExtractor`), optionally initialized from a Scandots PPO checkpoint |
 
 The LiDAR path keeps the scan encoder and actor architecture of the GT-scan
 policy. Its data flow is:
@@ -28,17 +28,17 @@ modeled drift and noise. Raw point clouds and odometry are not concatenated as
 new direct inputs to the actor. The map updates every five control steps (10 Hz),
 and its latest samples are held between updates.
 
-The environment still provides GT observations for reference. The LiDAR execution
-path replaces the actor's scan slice with the elevation-map samples and replaces
-the explicit privileged-state slice, including base linear velocity, with the
-state estimator's predictions. Proprioception, history and task-direction inputs
-remain part of the policy input; this is not a claim that all simulator-derived
-information has been removed.
+The environment still provides GT scandots for visualization and diagnostics, but
+the LiDAR actor receives the elevation-map samples in that observation slice. The
+explicit privileged-state slice, including base linear velocity, is filled by the
+same state estimator used by the Scandots PPO path. Proprioception, history and
+task-direction inputs remain part of the policy input.
 
-**The two input paths are separate tasks, but they are not currently two PPO
-training phases.** The LiDAR training loop matches actions from a frozen GT-scan
-reference policy. It does not optimize PPO returns from the environment rewards.
-Switching this path to PPO is a separate algorithm change.
+Both input paths now train with the same PPO implementation, network, rewards,
+events and terrain distribution. Their runtime differences are the terrain input
+and action delay: Scandots disables action delay, while LiDAR keeps the existing
+delayed-action configuration. LiDAR training also schedules injected LiDAR and
+odometry noise from zero to the maxima stored in the observation configuration.
 
 ## Registered tasks
 
@@ -89,14 +89,13 @@ Run the commands below from the repository root.
 
 ## Training — trained_v1.4
 
-The `trained_v1.4` workflow has two input phases. Phase 1 trains with GT scandots
-using PPO. Phase 2 initializes from that checkpoint and adapts to LiDAR/odometry
-using the current action-imitation algorithm. These commands do not switch
-Phase 2 to PPO.
+The `trained_v1.4` workflow has two PPO phases. Phase 1 trains with GT scandots.
+Phase 2 initializes the policy and estimator weights from that checkpoint, changes
+the terrain observation to LiDAR/odometry elevation-map samples, enables action
+delay and continues optimizing the same PPO objective with a fresh optimizer.
 
 The v1.4 environment includes slip penalties and scheduled linear/angular
-perturbations. Phase 1 optimizes the reward directly; Phase 2 learns the actions
-of the GT-scan reference under the configured environment disturbances.
+perturbations. Both phases optimize the environment reward directly.
 
 ### Phase 1: Scandots input
 
@@ -121,39 +120,45 @@ restarted just because the registered task names changed.
 Run after the Phase 1 checkpoint is available:
 
 ```bash
+SCANDOTS_CHECKPOINT="logs/rsl_rl/unitree_go2_parkour/trained_v1.4/<scandots-run>/model_14999.pt"
+
 python scripts/rsl_rl/train.py \
   --task Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Train-v0 \
-  --load_run trained_v1.4 \
-  --checkpoint model_14999.pt \
+  --init_checkpoint "$SCANDOTS_CHECKPOINT" \
   --num_envs 192 \
-  --max_iterations 5000 \
+  --max_iterations 30000 \
+  --noise_ramp_ratio 0.7 \
   --run_name lidar_v1.4 \
   --seed 42 \
   --headless
 ```
 
-Do not add `--resume` when starting Phase 2 from Phase 1. A GT-scan checkpoint
-initializes the adapted actor and starts a fresh adaptation iteration/schedule.
-The explicit load arguments above override the older initialization defaults.
+`--init_checkpoint` is the explicit Phase 1 → Phase 2 boundary. It loads only the
+policy, estimator and observation-normalizer weights, resets the iteration counter,
+and starts fresh PPO optimizer, disturbance and LiDAR-noise schedules. It cannot be
+combined with `--resume`, `--load_run` or `--checkpoint`.
 
-`--load_run trained_v1.4` is resolved under
-`logs/rsl_rl/unitree_go2_parkour/`. The loader first checks that directory for
-`model_14999.pt`; otherwise it selects the most recently modified child run
-containing a match. If multiple Scandots runs are present, this is a latest-run
-selection, not a selection by `--run_name`. The loader prints the selected path.
-In training, `--checkpoint` is a filename/pattern, not an absolute path.
+`--noise_ramp_ratio` is the fraction of the Phase 2 iteration budget used by the
+linear ramp. The remaining fraction is split equally between a zero-noise prefix
+and a maximum-noise suffix. With the command above, 30,000 iterations are divided
+into 4,500 iterations at zero noise, 21,000 ramp iterations and 4,500 iterations
+at maximum noise. Use `--noise_ramp_ratio 2/3` for an exact 5,000 / 20,000 / 5,000
+split. The maximum sensor and odometry noise values remain in
+`LidarObservationsCfg`; the schedule multiplies those amplitudes by a value from
+0 to 1.
 
 Phase 2 keeps the existing output-directory configuration and adds the
 `_lidar_v1.4` run suffix. Use the actual run path printed at launch; changing a
 task ID or `--load_run` does not change the output directory. A completed
-5,000-iteration adaptation produces `model_4999.pt` in that run.
+30,000-iteration Phase 2 run produces `model_29999.pt` in that run.
 
 To resume either phase later, use its matching Train task and
 `--resume --load_run <configured-run-folder> --checkpoint <checkpoint-filename> --max_iterations <additional-iterations>`.
-`--max_iterations` is the additional iteration budget for that invocation, not
-the desired total iteration count. Omitting it uses the runner configuration's
-default budget. Resuming an existing phase and initializing Phase 2 from Phase 1
-are distinct.
+`--max_iterations` is the total noise-schedule horizon for a fresh Phase 2 run.
+When resuming, it is the additional iteration budget for that invocation while
+the original noise horizon, ratio and completed progress are restored from the
+LiDAR checkpoint. Resuming an existing phase and initializing Phase 2 from Phase 1
+are distinct operations.
 
 ## Playback and evaluation — trained_v1.4
 
@@ -162,7 +167,7 @@ Replace the placeholders before running the commands:
 
 ```bash
 SCANDOTS_CHECKPOINT="logs/rsl_rl/unitree_go2_parkour/trained_v1.4/<scandots-run>/model_14999.pt"
-LIDAR_CHECKPOINT="<absolute-path-to-the-phase-2-run>/model_4999.pt"
+LIDAR_CHECKPOINT="<absolute-path-to-the-phase-2-run>/model_29999.pt"
 ```
 
 Using explicit checkpoint paths avoids falling back to older configured model
@@ -242,13 +247,16 @@ between updates. `--preset` selects a Play terrain preset.
 
 Existing files and directory settings are preserved. Training writes under
 `logs/rsl_rl/<experiment_name>/<run_subdir>/<timestamp>_<run_name>`. The current
-experiment name is `unitree_go2_parkour`. Phase 1 uses `trained_v1.4` as its
-configured subdirectory; Phase 2 retains its existing configured subdirectory.
-The v1.4 run names identify new runs without moving previous outputs.
+experiment name is `unitree_go2_parkour`. Phase 1 uses `trained_v1.4`; Phase 2
+continues to use the existing `student_pretrained` subdirectory so this refactor
+does not move or rename prior logs. The v1.4 run names identify new runs without
+moving previous outputs.
 
-Renaming task registrations does not rename checkpoint keys, configuration
-classes, saved `params`, or existing logs. Use the new IDs when launching a new
-process. No compatibility aliases for the previous task IDs are registered.
+Renaming task registrations does not rename checkpoint keys, saved `params`, or
+existing logs. The active LiDAR configuration classes use neutral `Lidar` names;
+the previous internal class names remain as import aliases for serialized configs.
+Use the new IDs when launching a new process. No compatibility aliases for the
+previous task IDs are registered.
 
 ## Development checks
 

@@ -87,16 +87,16 @@ class TestTaskRegistry(unittest.TestCase):
                 "rsl_student_ppo_cfg:UnitreeGo2ParkourStudentPPORunnerCfg",
             ),
             "Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Train-v0": (
-                "parkour_em_student_cfg:UnitreeGo2EMStudentParkourEnvCfg",
-                "rsl_em_student_ppo_cfg:UnitreeGo2ParkourEMStudentPPORunnerCfg",
+                "parkour_em_student_cfg:UnitreeGo2LidarParkourEnvCfg",
+                "rsl_em_student_ppo_cfg:UnitreeGo2ParkourLidarPPORunnerCfg",
             ),
             "Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0": (
-                "parkour_em_student_cfg:UnitreeGo2EMStudentParkourEnvCfg_PLAY",
-                "rsl_em_student_ppo_cfg:UnitreeGo2ParkourEMStudentPPORunnerCfg",
+                "parkour_em_student_cfg:UnitreeGo2LidarParkourEnvCfg_PLAY",
+                "rsl_em_student_ppo_cfg:UnitreeGo2ParkourLidarPPORunnerCfg",
             ),
             "Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Eval-v0": (
-                "parkour_em_student_cfg:UnitreeGo2EMStudentParkourEnvCfg_EVAL",
-                "rsl_em_student_ppo_cfg:UnitreeGo2ParkourEMStudentPPORunnerCfg",
+                "parkour_em_student_cfg:UnitreeGo2LidarParkourEnvCfg_EVAL",
+                "rsl_em_student_ppo_cfg:UnitreeGo2ParkourLidarPPORunnerCfg",
             ),
         }
 

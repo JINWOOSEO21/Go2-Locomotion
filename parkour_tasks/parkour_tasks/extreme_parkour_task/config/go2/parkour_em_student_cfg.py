@@ -1,14 +1,10 @@
-"""LiDAR-input environments using the corresponding Scandots task settings.
-
-Class/module names remain stable for existing serialized configurations. Sensor
-sampling and odometry noise are configured in EMStudentObservationsCfg.
-"""
+"""LiDAR-input environments using the corresponding Scandots task settings."""
 
 from isaaclab.utils import configclass
 
 from parkour_tasks.default_cfg import GO2_LIDAR_CFG
 
-from .parkour_mdp_cfg import EMStudentObservationsCfg
+from .parkour_mdp_cfg import LidarObservationsCfg
 from .parkour_teacher_cfg import (
     ParkourTeacherSceneCfg,
     UnitreeGo2TeacherParkourEnvCfg,
@@ -18,16 +14,16 @@ from .parkour_teacher_cfg import (
 
 
 @configclass
-class ParkourEMStudentSceneCfg(ParkourTeacherSceneCfg):
+class ParkourLidarSceneCfg(ParkourTeacherSceneCfg):
     lidar = GO2_LIDAR_CFG
 
 
 @configclass
-class UnitreeGo2EMStudentParkourEnvCfg(UnitreeGo2TeacherParkourEnvCfg):
+class UnitreeGo2LidarParkourEnvCfg(UnitreeGo2TeacherParkourEnvCfg):
     # Fewer parallel environments keep the mapping backend's resource use bounded.
     # --num_envs overrides this without changing the PPO or task settings.
-    scene: ParkourEMStudentSceneCfg = ParkourEMStudentSceneCfg(num_envs=192, env_spacing=1.0)
-    observations: EMStudentObservationsCfg = EMStudentObservationsCfg()
+    scene: ParkourLidarSceneCfg = ParkourLidarSceneCfg(num_envs=192, env_spacing=1.0)
+    observations: LidarObservationsCfg = LidarObservationsCfg()
     lidar_noise_scale: float = 0.0
 
     def __post_init__(self):
@@ -38,9 +34,9 @@ class UnitreeGo2EMStudentParkourEnvCfg(UnitreeGo2TeacherParkourEnvCfg):
 
 
 @configclass
-class UnitreeGo2EMStudentParkourEnvCfg_EVAL(UnitreeGo2TeacherParkourEnvCfg_EVAL):
-    scene: ParkourEMStudentSceneCfg = ParkourEMStudentSceneCfg(num_envs=256, env_spacing=1.0)
-    observations: EMStudentObservationsCfg = EMStudentObservationsCfg()
+class UnitreeGo2LidarParkourEnvCfg_EVAL(UnitreeGo2TeacherParkourEnvCfg_EVAL):
+    scene: ParkourLidarSceneCfg = ParkourLidarSceneCfg(num_envs=256, env_spacing=1.0)
+    observations: LidarObservationsCfg = LidarObservationsCfg()
     lidar_noise_scale: float = 1.0
 
     def __post_init__(self):
@@ -51,9 +47,9 @@ class UnitreeGo2EMStudentParkourEnvCfg_EVAL(UnitreeGo2TeacherParkourEnvCfg_EVAL)
 
 
 @configclass
-class UnitreeGo2EMStudentParkourEnvCfg_PLAY(UnitreeGo2TeacherParkourEnvCfg_PLAY):
-    scene: ParkourEMStudentSceneCfg = ParkourEMStudentSceneCfg(num_envs=16, env_spacing=1.0)
-    observations: EMStudentObservationsCfg = EMStudentObservationsCfg()
+class UnitreeGo2LidarParkourEnvCfg_PLAY(UnitreeGo2TeacherParkourEnvCfg_PLAY):
+    scene: ParkourLidarSceneCfg = ParkourLidarSceneCfg(num_envs=16, env_spacing=1.0)
+    observations: LidarObservationsCfg = LidarObservationsCfg()
     lidar_noise_scale: float = 1.0
 
     def __post_init__(self):
@@ -61,3 +57,11 @@ class UnitreeGo2EMStudentParkourEnvCfg_PLAY(UnitreeGo2TeacherParkourEnvCfg_PLAY)
         self.scene.lidar.update_period = self.sim.dt * self.decimation
         self.actions.joint_pos.use_delay = True
         self.actions.joint_pos.history_length = 8
+
+
+# Keep old config symbols importable for serialized configs without exposing them
+# through the new task registrations.
+ParkourEMStudentSceneCfg = ParkourLidarSceneCfg
+UnitreeGo2EMStudentParkourEnvCfg = UnitreeGo2LidarParkourEnvCfg
+UnitreeGo2EMStudentParkourEnvCfg_EVAL = UnitreeGo2LidarParkourEnvCfg_EVAL
+UnitreeGo2EMStudentParkourEnvCfg_PLAY = UnitreeGo2LidarParkourEnvCfg_PLAY

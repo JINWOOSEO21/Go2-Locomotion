@@ -18,6 +18,16 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNNER_PATH = REPO_ROOT / "scripts" / "rsl_rl" / "modules" / "on_policy_runner_with_extractor.py"
 WRAPPER_PATH = REPO_ROOT / "scripts" / "rsl_rl" / "vecenv_wrapper.py"
+SCANDOTS_CFG_PATH = (
+    REPO_ROOT
+    / "parkour_tasks"
+    / "parkour_tasks"
+    / "extreme_parkour_task"
+    / "config"
+    / "go2"
+    / "parkour_teacher_cfg.py"
+)
+LIDAR_CFG_PATH = SCANDOTS_CFG_PATH.with_name("parkour_em_student_cfg.py")
 
 
 class _Tensor:
@@ -249,6 +259,26 @@ class LidarNoiseScheduleTest(unittest.TestCase):
 
 
 class LidarCheckpointContractTest(unittest.TestCase):
+    def test_depth_mode_remains_supported_without_lidar_adapter(self):
+        tree = ast.parse(RUNNER_PATH.read_text(encoding="utf-8"), RUNNER_PATH)
+        runner = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+        init = next(node for node in runner.body if isinstance(node, ast.FunctionDef) and node.name == "__init__")
+        source = ast.unparse(init)
+        self.assertIn("'depth_input'", source)
+        lidar_branch = next(
+            node
+            for node in init.body
+            if isinstance(node, ast.If) and ast.unparse(node.test) == "self.input_mode == 'lidar_input'"
+        )
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "configure_policy_input"
+                for node in ast.walk(lidar_branch)
+            )
+        )
+
     def test_checkpoint_metadata_and_warm_start_boundaries_are_present(self):
         tree = ast.parse(RUNNER_PATH.read_text(encoding="utf-8"), RUNNER_PATH)
         runner = next(node for node in tree.body if isinstance(node, ast.ClassDef))
@@ -286,6 +316,34 @@ class LidarCheckpointContractTest(unittest.TestCase):
             source.index("self._advance_lidar_noise_schedule()"),
         )
         self.assertIn("Lidar/noise_scale", source)
+
+
+class ActionDelayContractTest(unittest.TestCase):
+    @staticmethod
+    def _post_init_source(path: Path, class_name: str) -> str:
+        tree = ast.parse(path.read_text(encoding="utf-8"), path)
+        class_node = next(
+            node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name
+        )
+        post_init = next(
+            node for node in class_node.body if isinstance(node, ast.FunctionDef) and node.name == "__post_init__"
+        )
+        return ast.unparse(post_init)
+
+    def test_scandots_disables_action_delay(self):
+        source = self._post_init_source(SCANDOTS_CFG_PATH, "UnitreeGo2TeacherParkourEnvCfg")
+        self.assertIn("self.actions.joint_pos.use_delay = False", source)
+
+    def test_all_lidar_modes_enable_existing_action_delay(self):
+        for class_name in (
+            "UnitreeGo2LidarParkourEnvCfg",
+            "UnitreeGo2LidarParkourEnvCfg_EVAL",
+            "UnitreeGo2LidarParkourEnvCfg_PLAY",
+        ):
+            with self.subTest(class_name=class_name):
+                source = self._post_init_source(LIDAR_CFG_PATH, class_name)
+                self.assertIn("self.actions.joint_pos.use_delay = True", source)
+                self.assertIn("self.actions.joint_pos.history_length = 8", source)
 
 
 if __name__ == "__main__":

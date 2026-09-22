@@ -91,23 +91,13 @@ class StudentObservationsCfg:
 
 
 @configclass
-class EMStudentObservationsCfg:
-    """elevation-map student 관측: policy 는 teacher 와 동일 벡터(753), 별도 그룹
-    em_scan(132)이 depth_camera 그룹을 대체한다. runner(learn_em)가 obs 의
-    scan 구간을 em_scan 으로 갈아끼워 student 에 준다."""
+class LidarObservationsCfg(TeacherObservationsCfg):
+    """LiDAR 관측 구성.
 
-    @configclass
-    class PolicyCfg(ObsGroup):
-        extreme_parkour_observations = ObsTerm(
-            func=observations.ExtremeParkourObservations,
-            params={
-                "asset_cfg": SceneEntityCfg("robot"),
-                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
-                "parkour_name": "base_parkour",
-                "history_length": 10,
-            },
-            clip=(-100, 100),
-        )
+    ``policy``는 Scandots 경로와 같은 753차원 레이아웃을 유지한다. 별도의
+    ``em_scan`` 그룹이 LiDAR와 odometry로 만든 elevation map의 132개 샘플을
+    제공하고, RSL-RL wrapper가 policy의 GT scandots 구간만 이 값으로 교체한다.
+    """
 
     @configclass
     class EMScanPolicyCfg(ObsGroup):
@@ -134,8 +124,12 @@ class EMStudentObservationsCfg:
             },
         )
 
-    policy: PolicyCfg = PolicyCfg()
     em_scan: EMScanPolicyCfg = EMScanPolicyCfg()
+
+
+# 이전에 저장된 Hydra 설정과 외부 import를 위한 호환 alias. 새 task 등록과
+# 실행 경로에서는 LidarObservationsCfg를 사용한다.
+EMStudentObservationsCfg = LidarObservationsCfg
 
 
 @configclass

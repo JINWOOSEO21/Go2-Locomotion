@@ -175,6 +175,7 @@ def _run_depth_play_loop(record_depth):
         "simulation_app": FakeSimulationApp(),
         "is_distill": True,
         "is_em": False,
+        "is_lidar": False,
         "record_depth": record_depth,
         "record_scandots": False,
         "obs": obs,

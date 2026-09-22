@@ -60,9 +60,10 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         self.policy_cfg = train_cfg["policy"]
         self.input_mode = train_cfg.get("input_mode", "scandots_input")
         self.lidar_noise_ramp_ratio = float(train_cfg.get("noise_ramp_ratio", 0.7))
-        if self.input_mode not in ("scandots_input", "lidar_input"):
+        if self.input_mode not in ("scandots_input", "lidar_input", "depth_input"):
             raise ValueError(
-                f"Unsupported input_mode {self.input_mode!r}; expected 'scandots_input' or 'lidar_input'."
+                f"Unsupported input_mode {self.input_mode!r}; expected 'scandots_input', "
+                "'lidar_input' or 'depth_input'."
             )
         if not math.isfinite(self.lidar_noise_ramp_ratio) or not 0.0 < self.lidar_noise_ramp_ratio <= 1.0:
             raise ValueError("noise_ramp_ratio must be finite and in the interval (0, 1]")
@@ -81,11 +82,10 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
 
         if self.input_mode == "lidar_input" and self.algorithm_class_name != "PPOWithExtractor":
             raise ValueError("lidar_input requires algorithm.class_name='PPOWithExtractor'; imitation is unsupported")
-        configure_policy_input = getattr(self.env, "configure_policy_input", None)
-        if configure_policy_input is None:
-            if self.input_mode == "lidar_input":
+        if self.input_mode == "lidar_input":
+            configure_policy_input = getattr(self.env, "configure_policy_input", None)
+            if configure_policy_input is None:
                 raise TypeError("lidar_input requires an environment wrapper with configure_policy_input()")
-        else:
             configure_policy_input(
                 self.input_mode,
                 self.estimator_cfg["num_prop"],
