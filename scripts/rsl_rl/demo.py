@@ -516,7 +516,7 @@ class ParkourDemoGO2:
         delta 는 순수한 각도(rad)로 두고, obs 에 넣을 때만 원래 코드의
         `obs[:, 6:8] = 1.5*yaw` 와 같은 배율 1.5 를 곱한다.
 
-        반드시 정책 호출 직전, 즉 student 의 `obs[:, 6:8] = 1.5*yaw` 뒤에 불러야 한다.
+        공통 관측 생성부와 동일한 배율이며, 정책 호출 직전에 조종 방향으로 덮어쓴다.
         """
         if self.teleop is None:
             return

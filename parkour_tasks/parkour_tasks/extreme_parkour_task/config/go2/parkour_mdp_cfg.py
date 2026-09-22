@@ -241,9 +241,17 @@ class TeacherRewardsCfg:
 class TerminationsCfg:
     """Termination terms for the MDP."""
 
-    total_terminates = DoneTerm(
-        func=terminations.terminate_episode,
+    time_out = DoneTerm(
+        func=terminations.time_out,
         time_out=True,
+    )
+    goal_reached = DoneTerm(
+        func=terminations.goal_reached,
+        time_out=False,
+    )
+    fallen = DoneTerm(
+        func=terminations.fallen,
+        time_out=False,
         params={"asset_cfg": SceneEntityCfg("robot")},
     )
 

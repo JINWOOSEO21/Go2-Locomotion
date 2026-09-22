@@ -80,8 +80,8 @@ class ExtremeParkourObservations(ManagerTermBase):
                 self.asset.data.root_ang_vel_b * 0.25,  # [1,3] 0~2
                 imu_obs,  # [1,2] 3~4
                 0 * self.delta_yaw[:, None],  # [1,1] 5
-                self.delta_yaw[:, None],  # [1,1] 6
-                self.delta_next_yaw[:, None],  # [1,1] 7
+                1.5 * self.delta_yaw[:, None],  # [1,1] 6: scaled heading error (radians)
+                1.5 * self.delta_next_yaw[:, None],  # [1,1] 7: scaled next-heading error
                 0 * commands[:, 0:2],  # [1,2] 8
                 commands[:, 0:1],  # [1,1] 9
                 env_idx_tensor,

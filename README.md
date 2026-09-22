@@ -28,6 +28,12 @@ injected noise and drift. The policy also uses proprioception, observation histo
 and task-direction inputs; LiDAR and odometry describe its terrain-perception
 pipeline, not the entire control interface.
 
+Current and next target-heading errors occupy proprioception indices 6 and 7.
+Train, Play and Eval use `1.5 × heading_error` (angles in radians), matching the
+demo's teleoperation scale. These two entries are zeroed in the history buffer.
+Deployment must apply the same scale exactly once. Older checkpoints trained
+with unscaled heading errors are not input-equivalent to this convention.
+
 | Training phase | Terrain observations | Optimization | Action delay |
 | --- | --- | --- | --- |
 | Phase 1: Scandots pretraining | GT height samples | RL PPO (`PPOWithExtractor`) | Disabled |
@@ -37,6 +43,10 @@ Phase 2 optimizes environment rewards. It does not match actions from a frozen
 reference policy. LiDAR Train, Play and Eval all enable action delay, including
 when injected sensor noise is zero. `action_delay_steps=[1, 1]` keeps the delay at
 one step; `history_length=8` specifies buffer capacity, not an eight-step delay.
+
+Only time-limit truncations receive PPO's future-value bootstrap. Falls and
+goal completion are terminal; they receive no future-value bootstrap, including
+when they coincide with the time limit.
 
 ## Installation
 

@@ -24,22 +24,25 @@ if TYPE_CHECKING:
     from parkour_isaaclab.envs import ParkourManagerBasedRLEnv
 
 
-def terminate_episode(
+def time_out(env: ParkourManagerBasedRLEnv) -> torch.Tensor:
+    """An artificial episode limit; the continuing task's value is bootstrapped."""
+    return env.episode_length_buf >= env.max_episode_length
+
+
+def goal_reached(env: ParkourManagerBasedRLEnv) -> torch.Tensor:
+    """Successful task completion is terminal, not a time-limit truncation."""
+    parkour_event: ParkourEvent = env.parkour_manager.get_term("base_parkour")
+    return parkour_event.cur_goal_idx >= env.scene.terrain.cfg.terrain_generator.num_goals
+
+
+def fallen(
     env: ParkourManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ):
-    reset_buf = torch.zeros((env.num_envs,), dtype=torch.bool, device=env.device)
+    """Physical failure ends the return without a future-value bootstrap."""
     asset: Articulation = env.scene[asset_cfg.name]
     roll, pitch, _ = euler_xyz_from_quat(asset.data.root_state_w[:, 3:7])
     roll_cutoff = torch.abs(wrap_to_pi(roll)) > 1.5
     pitch_cutoff = torch.abs(wrap_to_pi(pitch)) > 1.5
-    time_out_buf = env.episode_length_buf >= env.max_episode_length
-    parkour_event: ParkourEvent = env.parkour_manager.get_term("base_parkour")
-    reach_goal_cutoff = parkour_event.cur_goal_idx >= env.scene.terrain.cfg.terrain_generator.num_goals
     height_cutoff = asset.data.root_state_w[:, 2] < -0.25
-    time_out_buf |= reach_goal_cutoff
-    reset_buf |= time_out_buf
-    reset_buf |= roll_cutoff
-    reset_buf |= pitch_cutoff
-    reset_buf |= height_cutoff
-    return reset_buf
+    return roll_cutoff | pitch_cutoff | height_cutoff

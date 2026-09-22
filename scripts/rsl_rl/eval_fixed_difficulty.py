@@ -263,7 +263,7 @@ class EpisodeRecorder:
         ids_np = ids.cpu().numpy()
         names = np.asarray(self.pe.env_per_terrain_name)[ids_np].reshape(len(ids_np), -1)[:, 0]
 
-        # terminate_episode 와 같은 판정. 우선순위는 goal > roll > pitch > height > timeout.
+        # 환경의 종료 조건과 같은 판정. 보고용 우선순위는 goal > roll > pitch > height > timeout.
         reason = np.full(len(ids_np), "timeout", dtype=object)
         reason[height < -0.25] = "height"
         reason[pitch > 1.5] = "fall_pitch"

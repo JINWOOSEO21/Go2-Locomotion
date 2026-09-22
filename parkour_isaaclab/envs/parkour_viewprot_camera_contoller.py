@@ -69,9 +69,11 @@ class ParkourViewportCameraController(ViewportCameraController):
         )
 
     def __del__(self):
-        """Release the keyboard interface."""
-        self._input.unsubscribe_from_keyboard_events(self._keyboard, self._keyboard_sub)
-        self._keyboard_sub = None
+        """Release keyboard and viewport callbacks, including partial initialization."""
+        if getattr(self, "_keyboard_sub", None) is not None:
+            self._input.unsubscribe_to_keyboard_events(self._keyboard, self._keyboard_sub)
+            self._keyboard_sub = None
+        super().__del__()
 
     def _on_keyboard_event(self, event, *args, **kwargs):
         # apply the command when pressed

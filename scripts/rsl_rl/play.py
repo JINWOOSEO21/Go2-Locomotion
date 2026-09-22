@@ -307,7 +307,9 @@ def main():
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
     ppo_runner = OnPolicyRunnerWithExtractor(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-    ppo_runner.load(resume_path)
+    # Playback needs only policy/estimator weights. This also permits an older
+    # Scandots PPO checkpoint to drive the LiDAR observation path for smoke tests.
+    ppo_runner.load(resume_path, load_optimizer=False, warm_start=True)
     print(ppo_runner)
     # obtain the trained policy for inference
 

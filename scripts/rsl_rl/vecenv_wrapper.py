@@ -168,7 +168,8 @@ class ParkourRslRlVecEnvWrapper(VecEnv):
         # move time out information to the extras dict
         # this is only needed for infinite horizon tasks
         if not self.unwrapped.cfg.is_finite_horizon:
-            extras["time_outs"] = truncated
+            # A simultaneous fall/success is terminal even at the time limit.
+            extras["time_outs"] = truncated & ~terminated
 
         # return the step information
         return obs, rew, dones, extras
