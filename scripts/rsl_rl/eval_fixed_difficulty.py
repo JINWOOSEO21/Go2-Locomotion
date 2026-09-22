@@ -50,11 +50,11 @@ from isaaclab.app import AppLauncher
 # local imports
 import cli_args  # isort: skip
 
-parser = argparse.ArgumentParser(description="Evaluate teacher checkpoints on a fixed-difficulty terrain.")
+parser = argparse.ArgumentParser(description="Evaluate scandots-input checkpoints on a fixed-difficulty terrain.")
 parser.add_argument(
     "--task",
     type=str,
-    default="Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Eval-v0",
+    default="Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Eval-v0",
     help="Eval 용 task id.",
 )
 parser.add_argument(

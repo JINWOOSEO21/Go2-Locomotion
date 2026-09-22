@@ -19,7 +19,7 @@ In the GUI, Numpad 7/9 change the tracked environment.
 
 Example:
   python scripts/rsl_rl/play.py --headless --multicam --panels \
-      --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Play-v0 \
+      --task Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0 \
       --num_envs 2 --video_length 1000
 """
 
@@ -45,7 +45,7 @@ parser.add_argument(
     help=(
         "Record one mp4 per environment from the scene's record_camera instead of a single viewport "
         "video. With --num_envs equal to the PLAY config's terrain-column count this yields one video "
-        "per terrain in a single run. Works for both teacher and student tasks."
+        "per terrain in a single run. Works with all policy input modes."
     ),
 )
 parser.add_argument(

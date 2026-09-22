@@ -16,7 +16,7 @@ from . import agents
 # Register Gym environments.
 ##
 gym.register(
-    id="Isaac-Extreme-Parkour-Teacher-Unitree-Go2-v0",
+    id="Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Train-v0",
     entry_point="parkour_isaaclab.envs:ParkourManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -27,7 +27,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0",
+    id="Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Play-v0",
     entry_point="parkour_isaaclab.envs:ParkourManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -38,7 +38,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Eval-v0",
+    id="Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Eval-v0",
     entry_point="parkour_isaaclab.envs:ParkourManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -49,7 +49,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Extreme-Parkour-Student-Unitree-Go2-v0",
+    id="Isaac-Extreme-Parkour-Depth-Unitree-Go2-Train-v0",
     entry_point="parkour_isaaclab.envs:ParkourManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -60,7 +60,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Extreme-Parkour-Student-Unitree-Go2-Play-v0",
+    id="Isaac-Extreme-Parkour-Depth-Unitree-Go2-Play-v0",
     entry_point="parkour_isaaclab.envs:ParkourManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -71,7 +71,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Extreme-Parkour-Student-Unitree-Go2-Eval-v0",
+    id="Isaac-Extreme-Parkour-Depth-Unitree-Go2-Eval-v0",
     entry_point="parkour_isaaclab.envs:ParkourManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -82,7 +82,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-v0",
+    id="Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Train-v0",
     entry_point="parkour_isaaclab.envs:ParkourManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -93,7 +93,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Play-v0",
+    id="Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0",
     entry_point="parkour_isaaclab.envs:ParkourManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -104,7 +104,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Eval-v0",
+    id="Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Eval-v0",
     entry_point="parkour_isaaclab.envs:ParkourManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={

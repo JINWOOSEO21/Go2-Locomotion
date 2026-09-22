@@ -42,7 +42,7 @@ TerrainGeneratorCfg.seed 기본값이 None 이라 지형 난수는 **전역 nump
 실행 (Isaac Sim 필요)
 ---------------------
     python deploy/tools/export_terrain.py --headless --num_envs 1 --seed 1 \
-        --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Play-v0 \
+        --task Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0 \
         --out-dir logs/.../exported
 """
 
@@ -59,7 +59,7 @@ sys.path.insert(0, _REPO)
 import cli_args  # noqa: E402
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument("--task", default="Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Play-v0")
+parser.add_argument("--task", default="Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0")
 parser.add_argument("--num_envs", type=int, default=1)
 parser.add_argument("--seed", type=int, default=1)
 parser.add_argument("--out-dir", required=True)

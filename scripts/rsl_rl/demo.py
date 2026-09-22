@@ -151,10 +151,9 @@ args_cli = parser.parse_args()
 if args_cli.mjpeg_port or args_cli.video:
     args_cli.enable_cameras = True
 
-# Student 정책은 depth 카메라 관측을 먹는다. --enable_cameras 없이 띄우면 RTX 렌더가
-# 올라오지 않아 depth_camera 센서 초기화 도중 프로세스가 조용히 죽는다(트레이스백도 없다).
-# 매번 플래그를 붙이는 대신 여기서 켜 준다. Teacher 정책은 height scanner 만 쓰므로 건드리지 않는다.
-if args_cli.task is not None and "Student" in args_cli.task:
+# 새 task 이름에서도 기존 Depth/Lidar demo의 카메라 활성화 동작을 유지한다.
+# Scandots 입력 task는 별도 녹화/스트리밍 옵션에 따라서만 카메라를 활성화한다.
+if args_cli.task is not None and any(input_name in args_cli.task for input_name in ("Depth", "Lidar")):
     args_cli.enable_cameras = True
 
 # launch omniverse app

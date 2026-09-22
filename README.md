@@ -1,197 +1,280 @@
 # Isaaclab_Parkour
 
-Parkour locomotion for the Unitree Go2 in IsaacLab, based on [Extreme-Parkour](https://extreme-parkour.github.io/).
+Unitree Go2 parkour locomotion in IsaacLab, with two primary terrain-input paths:
+`scandots_input` and `lidar_input`. This fork builds on
+[Isaaclab_Parkour](https://github.com/CAI23sbP/Isaaclab_Parkour) and
+[Extreme-Parkour](https://extreme-parkour.github.io/).
 
-## Policy versions
+## Input paths
 
-The main distinction between `trained_v1.1` and `trained_v1.3` is how the policy is trained and how its inputs are provided.
-
-| Version | Policy architecture and training | Perception and direction inputs |
+| Input path | Terrain input consumed by the policy | Current training method |
 | --- | --- | --- |
-| `trained_v1.1` | Teacher–student distillation with oracle points also supplied to the student. | Depth camera tilted 20° downward; the intended direction of travel is provided through oracle points. |
-| `trained_v1.3` | Retains the pretrained teacher policy architecture and adapts its inputs, rather than introducing a separate teacher–student architecture. | L1 LiDAR point clouds are converted into an elevation map; input noise is progressively increased during training. |
+| `scandots_input` | 132 ground-truth height samples (12 × 11 scandots) from the simulator | PPO (`PPOWithExtractor`) |
+| `lidar_input` | 132 height samples from an elevation map built using L1 LiDAR point clouds and noisy odometry | Action imitation (`EMDistillation`) initialized from a GT-scan policy |
 
-### trained_v1.1: Distillation with oracle direction inputs
+The LiDAR path keeps the scan encoder and actor architecture of the GT-scan
+policy. Its data flow is:
 
-`trained_v1.1` keeps the teacher–student structure and the same distillation method as the original approach. The key change is that **oracle points are provided to the student as inputs as well**. These points specify the robot's intended direction of travel, so the student does not also have to predict which direction the robot should move next.
+```text
+L1 LiDAR point clouds + odometry
+    → elevation map
+    → 12 × 11 height samples
+    → existing scan encoder and policy
+```
 
-The student therefore learns locomotion through distillation while receiving the direction information explicitly.
+Odometry is used to place the point clouds into the map and query it around the
+robot. In simulation, the pose estimate is derived from simulator state with
+modeled drift and noise. Raw point clouds and odometry are not concatenated as
+new direct inputs to the actor. The map updates every five control steps (10 Hz),
+and its latest samples are held between updates.
 
-### trained_v1.3: Input adaptation with the teacher policy architecture
+The environment still provides GT observations for reference. The LiDAR execution
+path replaces the actor's scan slice with the elevation-map samples and replaces
+the explicit privileged-state slice, including base linear velocity, with the
+state estimator's predictions. Proprioception, history and task-direction inputs
+remain part of the policy input; this is not a claim that all simulator-derived
+information has been removed.
 
-**`trained_v1.3` does not use a separate teacher–student policy architecture.** It starts from a teacher policy already trained with ground-truth (GT) scandots and preserves that policy's network architecture while changing the terrain input:
+**The two input paths are separate tasks, but they are not currently two PPO
+training phases.** The LiDAR training loop matches actions from a frozen GT-scan
+reference policy. It does not optimize PPO returns from the environment rewards.
+Switching this path to PPO is a separate algorithm change.
 
-1. Start with the policy trained on GT scandots.
-2. Collect point clouds with the L1 LiDAR and construct an elevation map using `elevation_mapping_cupy`.
-3. Sample the elevation map on the same 12 × 11 grid used for the teacher's scandots and feed these samples into the existing scan encoder.
-4. Continue training with progressively stronger noise on the elevation-map input so the policy can keep moving under increasingly noisy terrain observations.
+## Registered tasks
 
-The depth camera is removed in this version. The focus is on adapting the existing policy to LiDAR-derived terrain observations, rather than training a separate depth-camera student to reproduce a teacher.
+The names below are the exact IDs currently accepted by `--task`.
+`scandots_input` and `lidar_input` are descriptive names in this document, not
+new CLI options. The public IDs use Scandots, Lidar or Depth plus an explicit
+Train, Play or Eval suffix. Previous task IDs are no longer registered;
+checkpoint files, configuration class names and storage paths are unchanged.
 
-The registered task retains the name `Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-v0`. The current training code also reuses the `EMDistillation` harness and GT teacher action targets for supervision. These implementation details describe the optimization path; the adapted policy retains the teacher's architecture instead of using a distinct student architecture.
-
-### trained_v1.3 observation changes
-
-Two additional observation changes affect compatibility with earlier checkpoints:
-
-- **Fixed terrain-type flags:** the flat/non-flat components at proprioceptive observation indices 11 and 12 are fixed to `non-flat=1` and `flat=0`, regardless of terrain. This removes dependence on an oracle terrain-type signal and targets robust locomotion over rough terrain. The convention applies to training, playback, evaluation, and demos.
-- **Estimated explicit privileged observations:** the elevation-map policy receives the frozen estimator's predictions in the nine-dimensional `priv_explicit` slot, including base linear velocity, in place of GT values. The estimator comes from teacher training. This aligns the policy's observations with deployment conditions, where GT base velocity is unavailable.
-
-### trained_v1.4: Slip and disturbance robustness
-
-Retrain the GT-scan teacher with PPO and the new reward, then adapt that teacher to elevation-map inputs using the existing EM training path.
-
-- Ground friction uses `multiply`. Robot friction uses 96 material buckets: 32 each in `[0.25, 0.5)`, `[0.5, 1.0)`, and `[1.0, 2.0)`, giving each interval probability 1/3. Static and dynamic friction match; all robot shapes share the sampled coefficient within an environment.
-- During training, world-frame x/y velocities are reset every 8 seconds. Body-frame roll/pitch/yaw angular velocity increments are added every 7 seconds. The bounds below apply independently to each component.
-- The teacher's slip reward is `-0.04 * sum(indicator(contact_force_norm >= 5 N) * foot_xy_speed)`, where the comparison is a per-foot indicator and speed is measured in world coordinates. Only current contacts count. EM adaptation still optimizes action imitation, not this reward directly.
-
-| Training progress | x/y bound (m/s) | Angular increment bound (rad/s) |
+| Use | `scandots_input` task ID | `lidar_input` task ID |
 | --- | --- | --- |
-| 0–20% | ±0.2 | ±0.1 |
-| 20–40% | ±0.4 | ±0.2 |
-| 40–60% | ±0.6 | ±0.3 |
-| 60–80% | ±0.8 | ±0.4 |
-| 80–100% | ±1.0 | ±0.5 |
+| Train | `Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Train-v0` | `Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Train-v0` |
+| Play | `Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Play-v0` | `Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0` |
+| Eval | `Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Eval-v0` | `Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Eval-v0` |
 
-The schedule uses the additional iteration budget of the new training run, independent of the pretrained checkpoint's iteration number. Checkpoints save schedule progress: resuming a v1.4 run preserves its original schedule horizon and stays at full strength after that horizon. Starting EM adaptation from a teacher starts a fresh schedule. TensorBoard records `Disturbance/scale`.
+There are nine registered tasks in total. The other three use the older
+depth-camera input path and remain available for existing checkpoints:
 
-EVAL uses full strength and retains its existing 6-second linear interval, with the new 7-second angular interval. PLAY disables both disturbances. The `-0.04` slip weight is an initial value; its measured contribution still needs rollout calibration.
+| Use | Existing depth-camera task ID |
+| --- | --- |
+| Train | `Isaac-Extreme-Parkour-Depth-Unitree-Go2-Train-v0` |
+| Play | `Isaac-Extreme-Parkour-Depth-Unitree-Go2-Play-v0` |
+| Eval | `Isaac-Extreme-Parkour-Depth-Unitree-Go2-Eval-v0` |
+
+The registration source is
+[`config/go2/__init__.py`](parkour_tasks/parkour_tasks/extreme_parkour_task/config/go2/__init__.py).
+Train, Play and Eval select distinct environment configurations; Play disables
+scheduled pushes, while Eval retains evaluation disturbances.
 
 ## Installation
 
-Run the following from your IsaacLab directory in an environment configured for IsaacLab:
+Use a Python environment configured for IsaacLab. From the desired parent directory:
 
 ```bash
-git clone https://github.com/JINWOOSEO21/Isaaclab_Parkour.git
+git clone --recurse-submodules https://github.com/JINWOOSEO21/Isaaclab_Parkour.git
 cd Isaaclab_Parkour
-pip3 install -e .
-pip3 install -e ./parkour_tasks
+pip install -e .
+pip install -e ./parkour_tasks
 ```
 
-Run the commands below from the `Isaaclab_Parkour` repository root.
+For an existing checkout, initialize the elevation-map submodule with
+`git submodule update --init --recursive` if needed. The LiDAR path also requires
+the GPU/CuPy dependencies of
+[`elevation_mapping_cupy`](elevation_mapping_cupy/README.md); editable installation
+of this repository alone does not install that backend's full environment.
 
-## Training
+Run the commands below from the repository root.
 
-### Teacher policy
+## Training — trained_v1.4
+
+The `trained_v1.4` workflow has two input phases. Phase 1 trains with GT scandots
+using PPO. Phase 2 initializes from that checkpoint and adapts to LiDAR/odometry
+using the current action-imitation algorithm. These commands do not switch
+Phase 2 to PPO.
+
+The v1.4 environment includes slip penalties and scheduled linear/angular
+perturbations. Phase 1 optimizes the reward directly; Phase 2 learns the actions
+of the GT-scan reference under the configured environment disturbances.
+
+### Phase 1: Scandots input
 
 ```bash
-python scripts/rsl_rl/train.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-v0 --seed 1 --headless
+python scripts/rsl_rl/train.py \
+  --task Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Train-v0 \
+  --num_envs 4096 \
+  --max_iterations 15000 \
+  --run_name scandots_v1.4 \
+  --seed 42 \
+  --headless
 ```
 
-### Depth-camera student policy
+With the current configuration, this writes to
+`logs/rsl_rl/unitree_go2_parkour/trained_v1.4/<timestamp>_scandots_v1.4/`.
+After the 15,000-iteration run completes, use its `model_14999.pt` checkpoint.
+An already-running v1.4 run can supply this checkpoint; it does not need to be
+restarted just because the registered task names changed.
 
-This task uses the teacher–student distillation workflow.
+### Phase 2: LiDAR and odometry input
+
+Run after the Phase 1 checkpoint is available:
 
 ```bash
-python scripts/rsl_rl/train.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-v0 --seed 1 --headless
+python scripts/rsl_rl/train.py \
+  --task Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Train-v0 \
+  --load_run trained_v1.4 \
+  --checkpoint model_14999.pt \
+  --num_envs 192 \
+  --max_iterations 5000 \
+  --run_name lidar_v1.4 \
+  --seed 42 \
+  --headless
 ```
 
-### Elevation-map policy (trained_v1.3)
+Do not add `--resume` when starting Phase 2 from Phase 1. A GT-scan checkpoint
+initializes the adapted actor and starts a fresh adaptation iteration/schedule.
+The explicit load arguments above override the older initialization defaults.
 
-This task adapts the pretrained teacher architecture to elevation-map inputs. Configure the source teacher checkpoint before training.
+`--load_run trained_v1.4` is resolved under
+`logs/rsl_rl/unitree_go2_parkour/`. The loader first checks that directory for
+`model_14999.pt`; otherwise it selects the most recently modified child run
+containing a match. If multiple Scandots runs are present, this is a latest-run
+selection, not a selection by `--run_name`. The loader prints the selected path.
+In training, `--checkpoint` is a filename/pattern, not an absolute path.
+
+Phase 2 keeps the existing output-directory configuration and adds the
+`_lidar_v1.4` run suffix. Use the actual run path printed at launch; changing a
+task ID or `--load_run` does not change the output directory. A completed
+5,000-iteration adaptation produces `model_4999.pt` in that run.
+
+To resume either phase later, use its matching Train task and
+`--resume --load_run <configured-run-folder> --checkpoint <checkpoint-filename> --max_iterations <additional-iterations>`.
+`--max_iterations` is the additional iteration budget for that invocation, not
+the desired total iteration count. Omitting it uses the runner configuration's
+default budget. Resuming an existing phase and initializing Phase 2 from Phase 1
+are distinct.
+
+## Playback and evaluation — trained_v1.4
+
+Set these variables to the actual checkpoint paths from the two phases.
+Replace the placeholders before running the commands:
 
 ```bash
-python scripts/rsl_rl/train.py --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-v0 --seed 1 --headless
+SCANDOTS_CHECKPOINT="logs/rsl_rl/unitree_go2_parkour/trained_v1.4/<scandots-run>/model_14999.pt"
+LIDAR_CHECKPOINT="<absolute-path-to-the-phase-2-run>/model_4999.pt"
 ```
 
-## Playback and evaluation
+Using explicit checkpoint paths avoids falling back to older configured model
+locations. Both `play.py` and `evaluation.py` accept checkpoint paths here.
 
-### Teacher policy
-
-[Download the pretrained teacher policy](https://drive.google.com/file/d/1JtGzwkBixDHUWD_npz2Codc82tsaec_w/view?usp=sharing).
+### Scandots input
 
 ```bash
-python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0 --num_envs 16
-python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Eval-v0
+python scripts/rsl_rl/play.py \
+  --task Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Play-v0 \
+  --checkpoint "$SCANDOTS_CHECKPOINT" \
+  --num_envs 3 \
+  --seed 42
+
+python scripts/rsl_rl/evaluation.py \
+  --task Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Eval-v0 \
+  --checkpoint "$SCANDOTS_CHECKPOINT" \
+  --headless
 ```
 
-[Teacher policy demo](https://github.com/user-attachments/assets/ff1f58db-2439-449c-b596-5a047c526f1f)
-
-### Depth-camera student policy
-
-[Download the pretrained student policy](https://drive.google.com/file/d/1qter_3JZgbBcpUnTmTrexKnle7sUpDVe/view?usp=sharing).
+### LiDAR and odometry input
 
 ```bash
-python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Play-v0 --num_envs 16
-python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Eval-v0
+python scripts/rsl_rl/play.py \
+  --task Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0 \
+  --checkpoint "$LIDAR_CHECKPOINT" \
+  --num_envs 2 \
+  --seed 42
+
+python scripts/rsl_rl/evaluation.py \
+  --task Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Eval-v0 \
+  --checkpoint "$LIDAR_CHECKPOINT" \
+  --headless
 ```
 
-https://github.com/user-attachments/assets/82a5cecb-ffbf-4a46-8504-79188a147c40
+For normal playback/evaluation, match the task to the checkpoint's input path;
+use a completed Phase 2 checkpoint to evaluate the LiDAR adaptation. Play disables
+scheduled pushes; Eval uses its evaluation configuration rather than restoring
+the training terrain curriculum.
 
-### Elevation-map policy (trained_v1.3)
+### Recording and input panels
 
-```bash
-python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Play-v0 --num_envs 16
-python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Eval-v0
-```
-
-### Playback recording and input panels
-
-In `play.py`, `--video` records one viewport video under `videos/play/`.
-The viewer configuration starts at environment 0; there is currently no CLI
-argument for choosing a different viewport environment. In the GUI, Numpad 7/9
-switch the tracked environment. Headless recording has no keyboard camera control.
-
-`--multicam` records one video per environment under `videos/multicam/` (or
-`--out_dir`). Passing both `--video --multicam` saves both sets of videos.
-
-Add `--panels` to `--multicam` to display the policy's terrain input automatically:
-
-| Policy input | Panels beside the RGB video |
+| Flags | Output |
 | --- | --- |
-| Depth camera | Depth input used by the depth encoder |
-| Ground-truth scandots | GT scandots |
-| LiDAR-derived elevation map | GT scandots and Estimated scandots, side by side |
+| `--video` | One viewport video under `videos/play/` |
+| `--multicam` | One video per environment under `videos/multicam/`, or `--out_dir` |
+| `--video --multicam` | Both sets of videos |
 
-The elevation-map comparison uses the scan samples actually passed to the policy.
-Depth panels retain the last encoder input between encoder updates. `--panels`
-does not take a depth/scandots argument and requires `--multicam`; it does not add
-panels to the viewport video or attach an extra depth camera to a GT-scan policy.
+The viewport starts with environment 0. There is no CLI environment selector;
+in the GUI, Numpad 7/9 switch environments, Numpad 0 enables free camera mode,
+and Numpad 1 returns to robot tracking.
+
+`--panels` is a boolean flag requiring `--multicam`. It automatically shows GT
+scandots for the Scandots task, GT and Estimated scandots for the Lidar task,
+or the encoder's depth input for a Depth task. It affects only the per-environment
+videos when both recording modes are enabled.
+
+To record both v1.4 input phases with their corresponding panels:
 
 ```bash
-python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Play-v0 --headless --multicam --panels --num_envs 2 --video_length 1000
+python scripts/rsl_rl/play.py \
+  --task Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Play-v0 \
+  --checkpoint "$SCANDOTS_CHECKPOINT" \
+  --num_envs 3 --seed 42 --headless --multicam --panels --video_length 1000
+
+python scripts/rsl_rl/play.py \
+  --task Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0 \
+  --checkpoint "$LIDAR_CHECKPOINT" \
+  --num_envs 2 --seed 42 --headless --multicam --panels --video_length 1000
 ```
 
-## IsaacLab demos
+Panel values are copied before the environment step. Estimated scandots are the
+samples actually passed to the actor; depth panels retain the last encoder input
+between updates. `--preset` selects a Play terrain preset.
+
+## Logs and checkpoints — trained_v1.4
+
+Existing files and directory settings are preserved. Training writes under
+`logs/rsl_rl/<experiment_name>/<run_subdir>/<timestamp>_<run_name>`. The current
+experiment name is `unitree_go2_parkour`. Phase 1 uses `trained_v1.4` as its
+configured subdirectory; Phase 2 retains its existing configured subdirectory.
+The v1.4 run names identify new runs without moving previous outputs.
+
+Renaming task registrations does not rename checkpoint keys, configuration
+classes, saved `params`, or existing logs. Use the new IDs when launching a new
+process. No compatibility aliases for the previous task IDs are registered.
+
+## Development checks
+
+CPU-only task registration and recording/CLI regression tests:
 
 ```bash
-python scripts/rsl_rl/demo.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0
-python scripts/rsl_rl/demo.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Play-v0
+python -m unittest parkour_test.test_task_registry_cpu parkour_test.test_play_recording_cpu -v
 ```
 
-[Go2 demo in IsaacLab](https://github.com/user-attachments/assets/4fb1ba4b-1780-49b0-a739-bff0b95d9b66)
+Other module tests are in `parkour_test/`; some launch Isaac Sim and should not
+be collected indiscriminately while another training job is running.
 
-### Viewport controls
+Ruff lint and formatting settings are in [`pyproject.toml`](pyproject.toml).
+Logs, generated outputs and the elevation-map submodule are excluded. No Ruff
+command is run automatically by training or playback.
 
-The `ParkourViewportCameraController` supports the following controls:
+## Upstream attribution
 
-| Key | Action |
-| --- | --- |
-| `1` / `2` | Select an environment to view. |
-| `8` | Move the camera forward. |
-| `4` | Move the camera left. |
-| `6` | Move the camera right. |
-| `5` | Move the camera backward. |
-| `0` | Enable the free camera and mouse control. |
-| `1` | Return to the default camera mode. |
-
-## Module tests
-
-Module test scripts are available in `parkour_test/`.
-
-## Sim-to-sim and sim-to-real deployment
-
-See [go2_parkour_deploy](https://github.com/CAI23sbP/go2_parkour_deploy) for the deployment project.
-
-- [x] Teacher training code.
-- [x] Distillation training code.
-- [x] IsaacLab policy demos, based on the [IsaacLab showroom example](https://isaac-sim.github.io/IsaacLab/main/source/overview/showroom.html).
-- [x] Sim-to-sim deployment from IsaacLab to MuJoCo.
-- [ ] Sim-to-real deployment on the physical robot.
-
-## Project video
-
-https://github.com/user-attachments/assets/aa9f7ece-83c1-404f-be50-6ae6a3ba3530
+This README describes the current fork's input paths and commands. Earlier
+usage documentation remains available in Git history and in the
+[upstream repository](https://github.com/CAI23sbP/Isaaclab_Parkour).
+Documentation updated on 2026-09-22 to describe the current input paths and tasks.
+The upstream research citations and attribution notice are retained below.
+The root [`LICENSE`](LICENSE) contains GPL-3.0 text; individual source files also
+carry their own notices, including BSD-3-Clause SPDX headers. This README rewrite
+does not change those notices or relicense the code.
 
 ## Citation
 
@@ -219,6 +302,9 @@ year={2023}
 }
 ```
 
+The following attribution excerpt is retained from the earlier README; it is
+not a complete license text or a replacement for `LICENSE` and per-file notices.
+
 ```
 Copyright (c) 2025, Sangbaek Park
 
@@ -230,7 +316,3 @@ explicit citation of the following repository:
 
 https://github.com/CAI23sbP/Isaaclab_Parkour
 ```
-
-## Contact
-
-[sbp0783@hanyang.ac.kr](mailto:sbp0783@hanyang.ac.kr)
