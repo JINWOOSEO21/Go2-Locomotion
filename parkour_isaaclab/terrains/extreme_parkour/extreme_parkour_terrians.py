@@ -601,13 +601,14 @@ def parkour_trapezoid_ramp_terrain(
     """옆에서 보면 사다리꼴인 경사로 지형: 오르막 - 평지 - 내리막.
 
     - 경사 각도는 ``slope_angle`` (도 단위 difficulty 수식) 로 정하고,
-      오르막과 내리막의 기울기는 같다. 기본 '10 + 27*difficulty' 는 10행 커리큘럼
-      (difficulty = row/9) 에서 정확히 10, 13, ..., 37도가 된다.
-    - 평지(꼭대기) 길이와 높이는 ``plateau_len_range`` / ``plateau_height_range``
-      에서 랜덤으로 뽑는다. 각도가 스펙이므로, 완만한 각도에서 뽑힌 높이가
-      타일 길이를 넘치게 하면 각도를 유지한 채 높이를 낮춰서 맞춘다.
-    - 경사면은 slope_threshold(기본 1.5) 기준을 넘지 않아 (37도에서 픽셀당
-      0.075m < 0.15m) 직각화되지 않고 매끈한 램프로 렌더된다. roughness 노이즈가
+      오르막과 내리막의 기울기는 같다. 기본 '10 + 25*difficulty' 는 11행 커리큘럼
+      (difficulty = row/10) 에서 정확히 10, 12.5, ..., 35도가 된다.
+    - 꼭대기 평지 길이와 오르막 수평 길이를 ``plateau_len_range`` /
+      ``ramp_length_range`` 에서 랜덤으로 뽑는다. 내리막은 오르막과 같은 길이이며
+      높이는 수평 길이 * tan(경사각)으로 계산한다. 타일 길이가 부족하면
+      각도를 유지한 채 양쪽 램프 길이를 줄인다.
+    - 경사면은 slope_threshold(기본 1.5) 기준을 넘지 않아 (35도, 수평 격자 0.08m에서 픽셀당
+      약 0.056m < 0.12m) 직각화되지 않고 매끈한 램프로 렌더된다. roughness 노이즈가
       경사면 위에 그대로 얹혀 발 디딤 랜덤화가 된다.
     """
     width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
@@ -622,12 +623,12 @@ def parkour_trapezoid_ramp_terrain(
     slope = np.tan(np.deg2rad(slope_deg))
 
     plateau_len = round(np.random.uniform(*cfg.plateau_len_range) / cfg.horizontal_scale)
-    plateau_height_m = np.random.uniform(*cfg.plateau_height_range)
+    ramp_length_m = np.random.uniform(*cfg.ramp_length_range)
 
-    # 각도를 유지한 채 타일에 들어가도록 높이를 clamp 한다.
+    # 각도를 유지한 채 타일에 들어가도록 양쪽 램프의 수평 길이를 clamp 한다.
     end_margin = round(cfg.end_margin / cfg.horizontal_scale)
     avail = width_pixels - platform_len - plateau_len - end_margin
-    run_len = round(plateau_height_m / slope / cfg.horizontal_scale)
+    run_len = round(ramp_length_m / cfg.horizontal_scale)
     run_len = int(np.clip(run_len, 2, max(avail // 2, 2)))
     plateau_height = round(run_len * cfg.horizontal_scale * slope / cfg.vertical_scale)
 
@@ -673,7 +674,8 @@ def parkour_trapezoid_stairs_terrain(
     """사다리꼴 계단 지형: 계단 오르막 - 평지 - 계단 내리막.
 
     - 단차(riser) 는 ``step_height`` (difficulty 수식) 로 정한다. 기본
-      '0.05 + 0.18*difficulty' 는 10행 커리큘럼에서 정확히 5, 7, ..., 23cm 가 된다.
+      '0.05 + 0.18*difficulty' 는 11행 커리큘럼에서 5~23cm를 1.8cm 간격으로
+      보간한다. 실제 단차는 vertical_scale 단위로 반올림한다.
     - 단의 개수는 타일마다 ``num_steps_range`` (기본 3~7개, 양 끝 포함) 에서
       뽑고, 평지 높이는 자연히 뽑힌 단 수 * step_height 가 된다.
     - 디딤판(tread) 깊이는 step 지형과 같은 방식으로 계단마다 ``x_range`` 에서

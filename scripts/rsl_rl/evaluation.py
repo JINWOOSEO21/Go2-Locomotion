@@ -165,7 +165,9 @@ def main():
         if agent_cfg.algorithm.class_name not in ("DistillationWithExtractor", "EMDistillation"):
             with torch.inference_mode():
                 # agent stepping
-                # obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = estimator.inference(obs[:, :num_prop])
+                obs[:, num_prop + num_scan : num_prop + num_scan + num_priv_explicit] = estimator.inference(
+                    obs[:, :num_prop]
+                )
                 actions = policy(obs, hist_encoding=True)
             # env stepping
         elif is_em:

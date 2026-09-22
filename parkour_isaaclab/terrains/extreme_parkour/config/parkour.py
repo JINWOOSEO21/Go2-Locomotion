@@ -4,7 +4,7 @@ from parkour_isaaclab.terrains.parkour_terrain_generator_cfg import ParkourTerra
 EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
     size=(16.0, 4.0),
     border_width=20.0,
-    num_rows=10,
+    num_rows=11,
     num_cols=40,
     horizontal_scale=0.08,  ## original scale is 0.05, But Computing issue in IsaacLab see this issue in https://github.com/isaac-sim/IsaacLab/issues/2187
     vertical_scale=0.005,
@@ -129,25 +129,24 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
             grid_height_range=(0.02, 0.10),
             x_range=(1.5, 2.5),
         ),
-        # 사다리꼴 경사로: 오르막(10~37도) - 평지 - 내리막. 오르막/내리막 기울기 동일.
-        # 10행 커리큘럼에서 각도가 정확히 10,13,...,37도가 되도록 slope_angle 을 잡았다.
-        # 평지 길이/높이는 랜덤 (완만한 각도에서 넘치면 각도 유지, 높이만 clamp).
+        # 사다리꼴 경사로: 오르막(10~35도) - 평지 - 내리막. 오르막/내리막 기울기 동일.
+        # 11행 커리큘럼에서 각도가 정확히 10,12.5,...,35도가 되도록 slope_angle 을 잡았다.
+        # 램프 수평 길이와 꼭대기 평지 길이를 샘플링하고 높이는 경사각으로 계산한다.
         "parkour_trapezoid_ramp": ExtremeParkourTrapezoidRampTerrainCfg(
             proportion=0.0,
             apply_roughness=True,
-            slope_angle="10 + 27*difficulty",
+            slope_angle="10 + 25*difficulty",
             course_width_range=(2.0, 4.0),
-            plateau_len_range=(1.5, 3.0),
-            plateau_height_range=(0.4, 0.8),
+            plateau_len_range=(1.0, 2.0),
+            ramp_length_range=(2.5, 4.5),
         ),
         # 사다리꼴 계단: 계단 오르막 - 평지 - 계단 내리막 (단 수는 타일마다 3~7개 랜덤).
-        # 단차는 10행 커리큘럼에서 정확히 5,7,...,23cm. 디딤판 깊이는 step 지형처럼
+        # 단차는 11행 커리큘럼에서 5~23cm를 1.8cm 간격으로 보간한다. 디딤판 깊이는 step 지형처럼
         # 계단마다 x_range 에서 랜덤.
         #
         # generator 의 slope_threshold(0.08 스케일에서 0.12m) 때문에 단차가 그보다
-        # 낮은 row 0~3 은 계단 면이 수직으로 서지 않고 x_edge_mask 도 비어 있다.
-        # reward_feet_edge 가 terrain_levels > 3 에서만 켜지므로 실제 리워드에는
-        # 영향이 없다 (실측 edge 픽셀: row3=89, row4=232, row6=543).
+        # 낮은 레벨에서는 단차 자체가 수직 벽으로 변환되지 않을 수 있다.
+        # 실제 edge 판정에는 표면 거칠기와 0.005m 높이 격자도 영향을 준다.
         "parkour_trapezoid_stairs": ExtremeParkourTrapezoidStairsTerrainCfg(
             proportion=0.0,
             apply_roughness=True,

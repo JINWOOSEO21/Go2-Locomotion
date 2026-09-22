@@ -193,6 +193,8 @@ class elevation_map_scan(ManagerTermBase):
         # 이동거리에 선형으로 누적) — yaw 의 gyro bias 와 대칭 구조다.
         # b·bias 는 body frame 에서 걸린다(보폭/슬립 오차는 로봇 기준). 등방성 n 은
         # 회전 불변이라 frame 구분이 없다.
+        # odom_scale_var 는 분산이다. curriculum scale s 는 표준편차에 선형으로
+        # 적용되므로 실제 분산은 odom_scale_var * s² 가 된다.
         self.odom_scale_std = float(cfg.params.get("odom_scale_var", 0.02)) ** 0.5
         self.odom_pos_walk_std = float(cfg.params.get("odom_pos_walk_std", 0.005))
         self.odom_scale_bias_max = float(cfg.params.get("odom_scale_bias_max", 0.03))
@@ -323,6 +325,11 @@ class elevation_map_scan(ManagerTermBase):
 
     @torch.no_grad()
     def _update(self):
+        # Runner 가 iteration 마다 env.lidar_noise_scale 을 갱신한다. 직접 값이 아직
+        # 없으면 env cfg 의 초기값을 쓰며, 둘 다 없으면 이전 동작과 같은 최대(1.0).
+        noise_scale = float(
+            getattr(self.env, "lidar_noise_scale", getattr(self.env.cfg, "lidar_noise_scale", 1.0))
+        )
         lidar = self.lidar
         # .data 접근이 센서 lazy 갱신을 트리거 — 직전 0.1s 프레임(2160 ray, yaw 1.1회전)
         hits = lidar.data.ray_hits_w  # (N,R,3), miss=inf
@@ -352,8 +359,8 @@ class elevation_map_scan(ManagerTermBase):
         valid = finite & ~self_hit
 
         # L1 거리 노이즈 (스펙 ±2cm): range 백색잡음.
-        if self.range_std > 0:
-            t_hit = (t_hit + torch.randn_like(t_hit) * self.range_std).clamp_min(0.0)
+        if noise_scale > 0.0 and self.range_std > 0:
+            t_hit = (t_hit + torch.randn_like(t_hit) * self.range_std * noise_scale).clamp_min(0.0)
 
         # 센서 pose (GT) — 점군을 센서 프레임으로 되돌리는 데 쓴다. 실기에서 점군은
         # 애초에 센서 프레임으로 들어오므로 이 변환에는 odometry 오차가 없다.
@@ -366,11 +373,11 @@ class elevation_map_scan(ManagerTermBase):
         # 빔 지향 노이즈: 실기 ray 방향은 공칭값과 어긋난다. 노이즈 방향으로
         # 재캐스팅할 수는 없으므로 "실제 빔이 어긋난 방향으로 나갔는데 공칭 거리로
         # 기록됐다"의 역, 즉 어긋난 방향에 측정 거리를 놓는 것으로 근사한다.
-        if self.ray_dir_std_rad > 0:
+        if noise_scale > 0.0 and self.ray_dir_std_rad > 0:
             az = torch.atan2(dirs_sensor[..., 1], dirs_sensor[..., 0])
             el = torch.asin(dirs_sensor[..., 2].clamp(-1.0, 1.0))
-            az = az + torch.randn_like(az) * self.ray_dir_std_rad
-            el = (el + torch.randn_like(el) * self.ray_dir_std_rad).clamp(-1.5707, 1.5707)
+            az = az + torch.randn_like(az) * self.ray_dir_std_rad * noise_scale
+            el = (el + torch.randn_like(el) * self.ray_dir_std_rad * noise_scale).clamp(-1.5707, 1.5707)
             cos_el = torch.cos(el)
             dirs_sensor = torch.stack([cos_el * torch.cos(az), cos_el * torch.sin(az), torch.sin(el)], dim=-1)
         points_sensor = dirs_sensor * t_hit.unsqueeze(-1)
@@ -390,18 +397,24 @@ class elevation_map_scan(ManagerTermBase):
             self._odom_needs_init[:] = False
         d_pos_true = base_pos - self._prev_base_pos
         self._prev_base_pos = base_pos.clone()
-        if self.odom_scale_std > 0 or self.odom_pos_walk_std > 0 or self.odom_scale_bias_max > 0:
-            b_pos = torch.randn(self.num_envs, 3, device=self.device) * self.odom_scale_std
-            n_pos = torch.randn(self.num_envs, 3, device=self.device) * self.odom_pos_walk_std
+        if noise_scale > 0.0 and (
+            self.odom_scale_std > 0 or self.odom_pos_walk_std > 0 or self.odom_scale_bias_max > 0
+        ):
+            b_pos = torch.randn(self.num_envs, 3, device=self.device) * self.odom_scale_std * noise_scale
+            n_pos = torch.randn(self.num_envs, 3, device=self.device) * self.odom_pos_walk_std * noise_scale
             # scale 오차(b, bias)는 body frame 축별로 건다 — 보폭/슬립 오차는 로봇
             # 기준(진행/횡/수직)으로 생기므로 Δ 를 body 로 돌려 곱하고 world 로
             # 되돌려 누적한다. 등방성 walk n 은 회전 불변(R·N(0,σ²I)=N(0,σ²I))이라
             # frame 을 가릴 필요가 없다 — 축별 σ 를 도입하면 그때 body 로 옮길 것.
             d_pos_body = torch.bmm(R_base.transpose(1, 2), d_pos_true.unsqueeze(-1)).squeeze(-1)
-            err_body = d_pos_body * (b_pos + self._odom_pos_scale_bias)
+            # episode bias 자체는 항상 최대 범위로 보관하고 적용할 때만 scale 한다.
+            # 따라서 cfg 초기값이 0 이어도 curriculum 이 증가하면 즉시 활성화된다.
+            err_body = d_pos_body * (b_pos + self._odom_pos_scale_bias * noise_scale)
             self._odom_pos_err += torch.bmm(R_base, err_body.unsqueeze(-1)).squeeze(-1) + n_pos
-        n_yaw = torch.randn(self.num_envs, device=self.device) * self.odom_yaw_walk_std_rad
-        self._odom_yaw_err += self._odom_yaw_bias + n_yaw
+        if noise_scale > 0.0:
+            n_yaw = torch.randn(self.num_envs, device=self.device) * self.odom_yaw_walk_std_rad * noise_scale
+            # 누적된 과거 drift 에 scale 을 다시 곱하지 않고 이번 tick 증분만 조절한다.
+            self._odom_yaw_err += self._odom_yaw_bias * noise_scale + n_yaw
 
         # 회전 오차 = (roll/pitch 백색, small-angle) ∘ Rz(누적 yaw drift)
         zeros = torch.zeros(self.num_envs, device=self.device)
@@ -415,7 +428,10 @@ class elevation_map_scan(ManagerTermBase):
             ],
             dim=1,
         )
-        d_rp = torch.randn(self.num_envs, 2, device=self.device) * self.odom_rp_std_rad
+        if noise_scale > 0.0:
+            d_rp = torch.randn(self.num_envs, 2, device=self.device) * self.odom_rp_std_rad * noise_scale
+        else:
+            d_rp = torch.zeros(self.num_envs, 2, device=self.device)
         skew_rp = torch.stack(
             [
                 torch.stack([zeros, zeros, d_rp[:, 1]], dim=-1),

@@ -7,10 +7,22 @@ from __future__ import annotations
 
 import argparse
 import random
+from fractions import Fraction
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg
+
+
+def parse_noise_ramp_ratio(value: str) -> float:
+    """Accept a decimal or fraction for the linear part of the noise schedule."""
+    try:
+        ratio = float(Fraction(value))
+    except (ValueError, ZeroDivisionError, OverflowError) as exc:
+        raise argparse.ArgumentTypeError("noise_ramp_ratio must be a finite number in (0, 1].") from exc
+    if not 0.0 < ratio <= 1.0:
+        raise argparse.ArgumentTypeError("noise_ramp_ratio must be in (0, 1].")
+    return ratio
 
 
 def add_rsl_rl_args(parser: argparse.ArgumentParser):

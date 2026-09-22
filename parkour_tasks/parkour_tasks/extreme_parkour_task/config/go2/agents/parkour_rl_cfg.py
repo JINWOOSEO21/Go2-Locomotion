@@ -94,6 +94,8 @@ class ParkourRslRlDistillationAlgorithmCfg(RslRlPpoAlgorithmCfg):
 
 @configclass
 class ParkourRslRlOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
+    input_mode: str = "scandots_input"
+    noise_ramp_ratio: float = 0.7
     policy: ParkourRslRlPpoActorCriticCfg = MISSING
     estimator: ParkourRslRlEstimatorCfg = MISSING
     depth_encoder: ParkourRslRlDepthEncoderCfg | None = None

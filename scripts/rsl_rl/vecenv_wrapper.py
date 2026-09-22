@@ -19,6 +19,9 @@ class ParkourRslRlVecEnvWrapper(VecEnv):
         self.num_envs = self.unwrapped.num_envs
         self.device = self.unwrapped.device
         self.max_episode_length = self.unwrapped.max_episode_length
+        self._policy_input_mode = "scandots_input"
+        self._policy_num_prop = None
+        self._policy_num_scan = None
 
         # obtain dimensions of the environment
         if hasattr(self.unwrapped, "action_manager"):
@@ -101,7 +104,26 @@ class ParkourRslRlVecEnvWrapper(VecEnv):
             obs_dict = self.unwrapped.observation_manager.compute()
         else:
             obs_dict = self.unwrapped._get_observations()
+        obs_dict = self._adapt_policy_observations(obs_dict)
         return obs_dict["policy"], {"observations": obs_dict}
+
+    def configure_policy_input(self, input_mode: str, num_prop: int, num_scan: int) -> None:
+        """Select the source used for the policy's scan slice.
+
+        The default ``scandots_input`` path is intentionally a no-op. In
+        ``lidar_input`` mode, the wrapper replaces only the policy observation's
+        scan slice with ``em_scan`` while preserving the original GT scandots in
+        the returned extras.
+        """
+        if input_mode not in ("scandots_input", "lidar_input"):
+            raise ValueError(
+                f"Unsupported policy input mode {input_mode!r}; expected 'scandots_input' or 'lidar_input'."
+            )
+        if num_prop < 0 or num_scan <= 0:
+            raise ValueError(f"num_prop must be non-negative and num_scan must be positive, got {num_prop}, {num_scan}")
+        self._policy_input_mode = input_mode
+        self._policy_num_prop = int(num_prop)
+        self._policy_num_scan = int(num_scan)
 
     @property
     def episode_length_buf(self) -> torch.Tensor:
@@ -127,6 +149,7 @@ class ParkourRslRlVecEnvWrapper(VecEnv):
     def reset(self) -> tuple[torch.Tensor, dict]:  # noqa: D102
         # reset the environment
         obs_dict, _ = self.env.reset()
+        obs_dict = self._adapt_policy_observations(obs_dict)
         # return observations
         return obs_dict["policy"], {"observations": obs_dict}
 
@@ -136,6 +159,7 @@ class ParkourRslRlVecEnvWrapper(VecEnv):
             actions = torch.clamp(actions, -self.clip_actions, self.clip_actions)
         # record step information
         obs_dict, rew, terminated, truncated, extras = self.env.step(actions)
+        obs_dict = self._adapt_policy_observations(obs_dict)
         # compute dones for compatibility with RSL-RL
         dones = (terminated | truncated).to(dtype=torch.long)
         # move extra observations to the extras dict
@@ -169,3 +193,37 @@ class ParkourRslRlVecEnvWrapper(VecEnv):
         self.env.unwrapped.action_space = gym.vector.utils.batch_space(
             self.env.unwrapped.single_action_space, self.num_envs
         )
+
+    def _adapt_policy_observations(self, obs_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """Return lidar-adapted observations without mutating environment-owned tensors."""
+        if self._policy_input_mode != "lidar_input":
+            return obs_dict
+
+        policy = obs_dict.get("policy")
+        em_scan = obs_dict.get("em_scan")
+        if policy is None:
+            raise KeyError("lidar_input requires obs_dict['policy'], but it is missing")
+        if em_scan is None:
+            raise KeyError("lidar_input requires obs_dict['em_scan'], but it is missing")
+
+        scan_start = self._policy_num_prop
+        scan_end = scan_start + self._policy_num_scan
+        if policy.ndim != 2 or policy.shape[1] < scan_end:
+            raise ValueError(
+                "lidar_input policy observation has an invalid shape: "
+                f"expected [num_envs, >= {scan_end}], got {tuple(policy.shape)}"
+            )
+        expected_shape = (policy.shape[0], self._policy_num_scan)
+        if tuple(em_scan.shape) != expected_shape:
+            raise ValueError(
+                "lidar_input em_scan shape mismatch: "
+                f"expected {expected_shape}, got {tuple(em_scan.shape)}"
+            )
+
+        adapted_policy = policy.clone()
+        gt_scandots = policy[:, scan_start:scan_end].clone()
+        adapted_policy[:, scan_start:scan_end] = em_scan
+        adapted_obs_dict = dict(obs_dict)
+        adapted_obs_dict["policy"] = adapted_policy
+        adapted_obs_dict["gt_scandots"] = gt_scandots
+        return adapted_obs_dict

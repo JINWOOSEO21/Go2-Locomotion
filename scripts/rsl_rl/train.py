@@ -26,6 +26,14 @@ parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
 parser.add_argument(
+    "--noise_ramp_ratio", type=cli_args.parse_noise_ramp_ratio, default=0.7,
+    help="LiDAR noise ramp fraction (default: 0.7; accepts 2/3). Remaining iterations split equally before/after.",
+)
+parser.add_argument(
+    "--init_checkpoint", type=str, default=None,
+    help="Initialize PPO model/estimator weights from this checkpoint path, with fresh optimizer and schedules.",
+)
+parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 # append RSL-RL cli arguments
@@ -33,6 +41,14 @@ cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
+if args_cli.max_iterations is not None and args_cli.max_iterations <= 0:
+    parser.error("--max_iterations must be positive.")
+if args_cli.init_checkpoint:
+    if args_cli.resume or args_cli.load_run is not None or args_cli.checkpoint is not None:
+        parser.error("--init_checkpoint cannot be combined with --resume, --load_run or --checkpoint.")
+    args_cli.init_checkpoint = os.path.abspath(os.path.expanduser(args_cli.init_checkpoint))
+    if not os.path.isfile(args_cli.init_checkpoint):
+        parser.error(f"Initialization checkpoint does not exist: {args_cli.init_checkpoint}")
 
 # always enable cameras to record video
 if args_cli.video:
@@ -121,6 +137,20 @@ def main(
     agent_cfg.max_iterations = (
         args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
     )
+    if agent_cfg.max_iterations <= 0:
+        raise ValueError("max_iterations must be positive.")
+    if getattr(agent_cfg, "input_mode", "scandots_input") == "lidar_input":
+        agent_cfg.noise_ramp_ratio = args_cli.noise_ramp_ratio
+        # Initial scene/reset observations must also be noise-free.
+        env_cfg.lidar_noise_scale = 0.0
+    if args_cli.init_checkpoint and agent_cfg.algorithm.class_name != "PPOWithExtractor":
+        raise ValueError("--init_checkpoint is supported for PPO tasks only.")
+    if (
+        agent_cfg.algorithm.class_name == "PPOWithExtractor"
+        and not agent_cfg.resume
+        and (args_cli.load_run is not None or args_cli.checkpoint is not None)
+    ):
+        raise ValueError("Use --init_checkpoint PATH for a new PPO phase, or --resume to continue an existing run.")
 
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here
@@ -207,7 +237,10 @@ def main(
     # # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint
-    if agent_cfg.resume or agent_cfg.algorithm.class_name in _distill_classes:
+    if args_cli.init_checkpoint:
+        print(f"[INFO]: Initializing PPO weights from: {args_cli.init_checkpoint}")
+        runner.load(args_cli.init_checkpoint, warm_start=True)
+    elif agent_cfg.resume or agent_cfg.algorithm.class_name in _distill_classes:
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         # 학습 재개에서만 지형 커리큘럼까지 되살린다. 체크포인트에 terrain_levels 가

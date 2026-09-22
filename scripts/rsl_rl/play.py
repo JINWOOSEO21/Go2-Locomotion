@@ -256,12 +256,17 @@ def apply_terrain_override(env_cfg):
         )
 
 
-def snapshot_policy_panels(obs, num_prop, num_scan, *, depth=None, estimated_obs=None):
+def snapshot_policy_panels(obs, num_prop, num_scan, *, depth=None, estimated_obs=None, gt_scandots=None):
     """Copy the terrain inputs before env.step can mutate their backing buffers."""
     if depth is not None:
         return depth.detach().cpu().numpy().copy(), None
 
     scan = slice(num_prop, num_prop + num_scan)
+    if gt_scandots is not None:
+        return None, [
+            ("GT", gt_scandots.detach().cpu().numpy().copy()),
+            ("Estimated", obs[:, scan].detach().cpu().numpy().copy()),
+        ]
     panels = [("GT", obs[:, scan].detach().cpu().numpy().copy())]
     if estimated_obs is not None:
         panels.append(("Estimated", estimated_obs[:, scan].detach().cpu().numpy().copy()))
@@ -341,6 +346,7 @@ def main():
     # obtain the trained policy for inference
 
     estimator = ppo_runner.get_estimator_inference_policy(device=env.device)
+    is_lidar = getattr(agent_cfg, "input_mode", "scandots_input") == "lidar_input"
     if agent_cfg.algorithm.class_name == "DistillationWithExtractor":
         policy = ppo_runner.get_inference_depth_policy(device=env.unwrapped.device)
         depth_encoder = ppo_runner.get_depth_encoder_inference_policy(device=env.device)
@@ -367,19 +373,22 @@ def main():
         print("[INFO] EMDistillation: JIT/ONNX export 는 지원하지 않는다 (EM 파이프라인이 정책 밖).")
     else:
         policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
-        policy_nn = ppo_runner.alg.policy
-        export_model_dir = os.path.join(os.path.dirname(resume_path), "exported_teacher")
-        export_teacher_policy_as_jit(policy_nn, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt")
-        export_teacher_policy_as_onnx(
-            policy_nn, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
-        )
+        if is_lidar:
+            print("[INFO] LiDAR PPO playback: sensor/map preprocessing is external; automatic deployment export is skipped.")
+        else:
+            policy_nn = ppo_runner.alg.policy
+            export_model_dir = os.path.join(os.path.dirname(resume_path), "exported_teacher")
+            export_teacher_policy_as_jit(policy_nn, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt")
+            export_teacher_policy_as_onnx(
+                policy_nn, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
+            )
 
     is_em = agent_cfg.algorithm.class_name == "EMDistillation"
     is_distill = agent_cfg.algorithm.class_name in ("DistillationWithExtractor", "EMDistillation")
     record_depth = args_cli.panels and is_distill and not is_em
     record_scandots = args_cli.panels and not record_depth
     if args_cli.panels:
-        content = "Depth" if record_depth else "GT | Estimated" if is_em else "GT"
+        content = "Depth" if record_depth else "GT | Estimated" if is_em or is_lidar else "GT"
         print(f"[INFO] --panels: {content}")
 
     dt = env.unwrapped.step_dt
@@ -466,6 +475,7 @@ def main():
                     num_scan,
                     depth=panel_depth if record_depth else None,
                     estimated_obs=obs_em if is_em else None,
+                    gt_scandots=extras["observations"]["gt_scandots"] if is_lidar else None,
                 )
             # 스텝 중에 렌더가 일어나므로 그 전에 카메라를 현재 로봇 위치로 옮겨둔다.
             if recorder is not None:

@@ -29,7 +29,7 @@ class ParkourStudentSceneCfg(ParkourTeacherSceneCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        self.terrain.terrain_generator.num_rows = 10
+        self.terrain.terrain_generator.num_rows = 11
         self.terrain.terrain_generator.num_cols = 20
         self.terrain.terrain_generator.horizontal_scale = 0.1
         # 기하 관련 설정은 분포와 무관하게 전 지형에 적용한다.

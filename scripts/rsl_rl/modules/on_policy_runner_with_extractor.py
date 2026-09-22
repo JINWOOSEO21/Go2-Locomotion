@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import statistics
 import time
@@ -36,6 +37,20 @@ def _disturbance_scale_for_progress(completed_iterations: int, total_iterations:
     return _DISTURBANCE_SCALES[stage]
 
 
+def lidar_noise_scale_for_progress(
+    completed_iterations: int, total_iterations: int, ramp_ratio: float = 0.7
+) -> float:
+    """Return the lidar noise scale for a warmup, linear ramp, and plateau schedule."""
+    if total_iterations <= 0:
+        raise ValueError("total_iterations must be positive")
+    if not math.isfinite(ramp_ratio) or not 0.0 < ramp_ratio <= 1.0:
+        raise ValueError("ramp_ratio must be finite and in the interval (0, 1]")
+    warmup_iterations = (1.0 - ramp_ratio) * total_iterations / 2.0
+    ramp_iterations = ramp_ratio * total_iterations
+    progress = (completed_iterations - warmup_iterations) / ramp_iterations
+    return min(1.0, max(0.0, progress))
+
+
 class OnPolicyRunnerWithExtractor(OnPolicyRunner):
     def __init__(self, env: VecEnv, train_cfg: dict, log_dir: str | None = None, device="cpu"):
         self.cfg = train_cfg
@@ -43,17 +58,39 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         self.estimator_cfg = train_cfg["estimator"]
         self.depth_encoder_cfg = train_cfg["depth_encoder"]
         self.policy_cfg = train_cfg["policy"]
+        self.input_mode = train_cfg.get("input_mode", "scandots_input")
+        self.lidar_noise_ramp_ratio = float(train_cfg.get("noise_ramp_ratio", 0.7))
+        if self.input_mode not in ("scandots_input", "lidar_input"):
+            raise ValueError(
+                f"Unsupported input_mode {self.input_mode!r}; expected 'scandots_input' or 'lidar_input'."
+            )
+        if not math.isfinite(self.lidar_noise_ramp_ratio) or not 0.0 < self.lidar_noise_ramp_ratio <= 1.0:
+            raise ValueError("noise_ramp_ratio must be finite and in the interval (0, 1]")
         self.device = device
         self.env = env
         self.mean_hist_latent_loss = 0.0
         self._configure_multi_gpu()
 
-        if self.alg_cfg["class_name"] == "PPOWithExtractor":
+        self.algorithm_class_name = self.alg_cfg["class_name"]
+        if self.algorithm_class_name == "PPOWithExtractor":
             self.training_type = "rl"
-        elif self.alg_cfg["class_name"] in ("DistillationWithExtractor", "EMDistillation"):
+        elif self.algorithm_class_name in ("DistillationWithExtractor", "EMDistillation"):
             self.training_type = "distillation"
         else:
-            raise ValueError(f"Training type not found for algorithm {self.alg_cfg['class_name']}.")
+            raise ValueError(f"Training type not found for algorithm {self.algorithm_class_name}.")
+
+        if self.input_mode == "lidar_input" and self.algorithm_class_name != "PPOWithExtractor":
+            raise ValueError("lidar_input requires algorithm.class_name='PPOWithExtractor'; imitation is unsupported")
+        configure_policy_input = getattr(self.env, "configure_policy_input", None)
+        if configure_policy_input is None:
+            if self.input_mode == "lidar_input":
+                raise TypeError("lidar_input requires an environment wrapper with configure_policy_input()")
+        else:
+            configure_policy_input(
+                self.input_mode,
+                self.estimator_cfg["num_prop"],
+                self.estimator_cfg["num_scan"],
+            )
 
         obs, extras = self.env.get_observations()
         num_obs = obs.shape[1]
@@ -100,6 +137,8 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         # initialize algorithm
 
         self.em_cfg = train_cfg.get("em_distillation", None)
+        if self.input_mode == "lidar_input" and (self.em_cfg is not None or self.depth_encoder_cfg is not None):
+            raise ValueError("lidar_input PPO requires em_distillation=None and depth_encoder=None")
         if self.em_cfg is not None:
             # elevation-map student (계획서 §2.5): depth encoder 없이 depth_actor 만.
             self.learn = self.learn_em
@@ -173,6 +212,10 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         self._disturbance_schedule_total_iterations = None
         self._disturbance_schedule_completed_iterations = 0
         self._disturbance_schedule_resume_pending = False
+        self._lidar_noise_schedule_total_iterations = None
+        self._lidar_noise_schedule_completed_iterations = 0
+        self._lidar_noise_schedule_ramp_ratio = self.lidar_noise_ramp_ratio
+        self._lidar_noise_schedule_resume_pending = False
         self.git_status_repos = [rsl_rl.__file__]
 
     def learn_rl(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):  # noqa: C901
@@ -209,6 +252,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         # The curriculum is local to this learn() call. Loading a v1.4 checkpoint
         # restores its saved position; older teacher checkpoints start at stage 1.
         self._begin_disturbance_schedule(num_learning_iterations)
+        self._begin_lidar_noise_schedule(num_learning_iterations)
 
         # start learning
         obs, extras = self.env.get_observations()
@@ -242,6 +286,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         tot_iter = start_iter + num_learning_iterations
         for it in range(start_iter, tot_iter):
             self._apply_disturbance_schedule()
+            self._apply_lidar_noise_schedule()
             start = time.time()
             hist_encoding = it % self.dagger_update_freq == 0
 
@@ -316,11 +361,14 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             learn_time = stop - start
             self.current_learning_iteration = it
             self._advance_disturbance_schedule()
+            self._advance_lidar_noise_schedule()
             # log info
             if self.log_dir is not None and not self.disable_logs:
                 # Log information
                 self.log(locals())
                 self.writer.add_scalar("Disturbance/scale", self.env.unwrapped.disturbance_scale, it)
+                if self.input_mode == "lidar_input":
+                    self.writer.add_scalar("Lidar/noise_scale", self.env.unwrapped.lidar_noise_scale, it)
                 # Save model
                 if it % self.save_interval == 0:
                     self.save(os.path.join(self.log_dir, f"model_{it}.pt"))
@@ -652,6 +700,42 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                 total,
             )
 
+    def _begin_lidar_noise_schedule(self, num_learning_iterations: int):
+        """Start a fresh lidar schedule or continue the schedule restored by ``load``."""
+        if self.input_mode != "lidar_input":
+            return
+        if num_learning_iterations <= 0:
+            raise ValueError("num_learning_iterations must be positive for lidar noise scheduling")
+        if self._lidar_noise_schedule_resume_pending:
+            self._lidar_noise_schedule_resume_pending = False
+        else:
+            self._lidar_noise_schedule_total_iterations = int(num_learning_iterations)
+            self._lidar_noise_schedule_completed_iterations = 0
+            self._lidar_noise_schedule_ramp_ratio = self.lidar_noise_ramp_ratio
+        self._apply_lidar_noise_schedule()
+
+    def _apply_lidar_noise_schedule(self):
+        if self.input_mode != "lidar_input":
+            return
+        total = self._lidar_noise_schedule_total_iterations
+        if total is None:
+            return
+        self.env.unwrapped.lidar_noise_scale = lidar_noise_scale_for_progress(
+            self._lidar_noise_schedule_completed_iterations,
+            total,
+            self._lidar_noise_schedule_ramp_ratio,
+        )
+
+    def _advance_lidar_noise_schedule(self):
+        if self.input_mode != "lidar_input":
+            return
+        total = self._lidar_noise_schedule_total_iterations
+        if total is not None:
+            self._lidar_noise_schedule_completed_iterations = min(
+                self._lidar_noise_schedule_completed_iterations + 1,
+                total,
+            )
+
     def log_vision(self, locs, width=80, pad=35):
 
         collection_size = self.num_steps_per_env * self.env.num_envs * self.gpu_world_size
@@ -750,6 +834,8 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             "optimizer_state_dict": self.alg.optimizer.state_dict(),
             "iter": self.current_learning_iteration,
             "infos": infos,
+            "input_mode": self.input_mode,
+            "algorithm": self.algorithm_class_name,
         }
         # -- Save RND model if used
         if self.alg.rnd:
@@ -792,6 +878,12 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                 "total_iterations": self._disturbance_schedule_total_iterations,
                 "completed_iterations": self._disturbance_schedule_completed_iterations,
             }
+        if self.input_mode == "lidar_input" and self._lidar_noise_schedule_total_iterations is not None:
+            saved_dict["lidar_noise_schedule"] = {
+                "total_iterations": self._lidar_noise_schedule_total_iterations,
+                "completed_iterations": self._lidar_noise_schedule_completed_iterations,
+                "ramp_ratio": self._lidar_noise_schedule_ramp_ratio,
+            }
         # save model
         torch.save(saved_dict, path)
 
@@ -799,7 +891,13 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         if self.logger_type in ["neptune", "wandb"] and not self.disable_logs:
             self.writer.save_model(path, self.current_learning_iteration)
 
-    def load(self, path: str, load_optimizer: bool = True, restore_terrain_curriculum: bool = False):
+    def load(
+        self,
+        path: str,
+        load_optimizer: bool = True,
+        restore_terrain_curriculum: bool = False,
+        warm_start: bool = False,
+    ):
         """restore_terrain_curriculum 은 학습 재개(train.py)에서만 켠다.
 
         play/evaluation 은 cfg 가 정한 난이도 분포(EVAL 은 max_init_terrain_level=None
@@ -807,6 +905,43 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         그 분포를 덮어써 버린다.
         """
         loaded_dict = torch.load(path, weights_only=False)
+        if self.input_mode == "lidar_input" and "depth_actor_state_dict" in loaded_dict:
+            raise ValueError(
+                "Lidar PPO cannot load an imitation checkpoint containing 'depth_actor_state_dict'. "
+                "Initialize from a Scandots PPO checkpoint instead."
+            )
+        if self.input_mode == "lidar_input" and not warm_start:
+            checkpoint_mode = loaded_dict.get("input_mode")
+            checkpoint_algorithm = loaded_dict.get("algorithm")
+            if checkpoint_mode != "lidar_input" or checkpoint_algorithm != "PPOWithExtractor":
+                raise ValueError(
+                    "A normal Lidar PPO load requires a Lidar PPO checkpoint with input_mode='lidar_input' "
+                    "and algorithm='PPOWithExtractor'. Use --init_checkpoint for a Scandots PPO warm start."
+                )
+            if "lidar_noise_schedule" not in loaded_dict:
+                raise ValueError(
+                    "Lidar PPO resume checkpoint has no 'lidar_noise_schedule'; use --init_checkpoint "
+                    "to start a fresh Lidar training schedule."
+                )
+
+        if warm_start:
+            self.alg.policy.load_state_dict(loaded_dict["model_state_dict"])
+            self.alg.estimator.load_state_dict(loaded_dict["estimator_state_dict"])
+            if self.empirical_normalization:
+                self.obs_normalizer.load_state_dict(loaded_dict["obs_norm_state_dict"])
+                self.privileged_obs_normalizer.load_state_dict(loaded_dict["privileged_obs_norm_state_dict"])
+            self.current_learning_iteration = 0
+            if getattr(self.alg, "counter", None) is not None:
+                self.alg.counter = 0
+            self._lidar_noise_schedule_total_iterations = None
+            self._lidar_noise_schedule_completed_iterations = 0
+            self._lidar_noise_schedule_ramp_ratio = self.lidar_noise_ramp_ratio
+            self._lidar_noise_schedule_resume_pending = False
+            self._disturbance_schedule_total_iterations = None
+            self._disturbance_schedule_completed_iterations = 0
+            self._disturbance_schedule_resume_pending = False
+            return loaded_dict.get("infos")
+
         starts_distillation_from_teacher = False
         resumed_training = self.alg.policy.load_state_dict(loaded_dict["model_state_dict"])
         self.alg.estimator.load_state_dict(loaded_dict["estimator_state_dict"])
@@ -886,6 +1021,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             self.current_learning_iteration = loaded_dict["iter"]
             self._restore_alg_counter(loaded_dict)
         self._restore_disturbance_schedule(loaded_dict, starts_distillation_from_teacher)
+        self._restore_lidar_noise_schedule(loaded_dict)
         # -- 지형 커리큘럼 복원. 모델 로드가 다 끝난 뒤에 한다.
         if restore_terrain_curriculum:
             self._restore_terrain_levels(loaded_dict.get("terrain_levels"))
@@ -913,6 +1049,37 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         self._disturbance_schedule_total_iterations = total
         self._disturbance_schedule_completed_iterations = min(completed, total)
         self._disturbance_schedule_resume_pending = True
+
+    def _restore_lidar_noise_schedule(self, loaded_dict):
+        """Restore Lidar PPO noise progress without changing evaluation environment noise."""
+        self._lidar_noise_schedule_total_iterations = None
+        self._lidar_noise_schedule_completed_iterations = 0
+        self._lidar_noise_schedule_ramp_ratio = self.lidar_noise_ramp_ratio
+        self._lidar_noise_schedule_resume_pending = False
+        if self.input_mode != "lidar_input":
+            return
+
+        state = loaded_dict["lidar_noise_schedule"]
+        try:
+            total = int(state["total_iterations"])
+            completed = int(state["completed_iterations"])
+            ramp_ratio = float(state["ramp_ratio"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("invalid lidar_noise_schedule in checkpoint") from exc
+        if total <= 0 or completed < 0:
+            raise ValueError("invalid lidar_noise_schedule counts in checkpoint")
+        if not math.isfinite(ramp_ratio) or not 0.0 < ramp_ratio <= 1.0:
+            raise ValueError("invalid lidar_noise_schedule ramp_ratio in checkpoint")
+        if not math.isclose(ramp_ratio, self.lidar_noise_ramp_ratio):
+            warnings.warn(
+                "checkpoint lidar noise ramp_ratio "
+                f"({ramp_ratio}) differs from the current config ({self.lidar_noise_ramp_ratio}); "
+                "the saved ratio remains authoritative for resume"
+            )
+        self._lidar_noise_schedule_total_iterations = total
+        self._lidar_noise_schedule_completed_iterations = min(completed, total)
+        self._lidar_noise_schedule_ramp_ratio = ramp_ratio
+        self._lidar_noise_schedule_resume_pending = True
 
     def _restore_alg_counter(self, loaded_dict):
         """PPO 업데이트 카운터를 되살린다. priv_reg_coef_schedual 이 이 값만 본다.

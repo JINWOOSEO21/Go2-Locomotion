@@ -13,6 +13,7 @@ from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import 
 
 @configclass
 class UnitreeGo2ParkourStudentPPORunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
+    input_mode = "depth_input"
     num_steps_per_env = 24
     max_iterations = 5000
     save_interval = 1000
