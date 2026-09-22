@@ -1,14 +1,13 @@
-
 from __future__ import annotations
 
 import inspect
-import torch
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import omni.kit.app
+import torch
+from isaaclab.managers.command_manager import CommandManager, CommandTerm
 
-from isaaclab.managers.command_manager import CommandTerm, CommandManager
 from .parkour_manager_term_cfg import ParkourTermCfg
 
 if TYPE_CHECKING:
@@ -19,9 +18,10 @@ Parkour Manager is dealing with goal heading position
 It is similar to a CommandMangner which is a handling Position Command
 """
 
+
 class ParkourTerm(CommandTerm):
     def __init__(self, cfg: ParkourTermCfg, env: ParkourManagerBasedRLEnv):
-        super().__init__(cfg, env) 
+        super().__init__(cfg, env)
 
     def reset(self, env_ids: Sequence[int] | None = None) -> dict[str, float]:
         if env_ids is None:
@@ -35,7 +35,7 @@ class ParkourTerm(CommandTerm):
         self._resample(env_ids)
 
         return extras
-    
+
     def _resample(self, env_ids: Sequence[int]):
         if len(env_ids) != 0:
             self._resample_command(env_ids)
@@ -55,16 +55,16 @@ class ParkourTerm(CommandTerm):
         # check if function raises NotImplementedError
         source_code = inspect.getsource(self._set_debug_vis_impl)
         return "NotImplementedError" not in source_code
-    
+
     def __call__(self):
-        pass 
+        pass
 
 
-    
 class ParkourManager(CommandManager):
     _env: ParkourManagerBasedRLEnv
-    def __init__(self, cfg: object, env: ParkourManagerBasedRLEnv):        
-        super().__init__(cfg, env) 
+
+    def __init__(self, cfg: object, env: ParkourManagerBasedRLEnv):
+        super().__init__(cfg, env)
 
     def __call__(self):
         for term in self._terms.values():
@@ -103,4 +103,3 @@ class ParkourManager(CommandManager):
                 raise TypeError(f"Returned object for the term '{term_name}' is not of type ParkourType.")
             # add class to dict
             self._terms[term_name] = term
-

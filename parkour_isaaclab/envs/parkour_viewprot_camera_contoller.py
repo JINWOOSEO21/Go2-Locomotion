@@ -1,25 +1,28 @@
-
 from __future__ import annotations
 
 import copy
-import numpy as np
 import weakref
 from typing import TYPE_CHECKING
+
+import carb
+import numpy as np
 import omni.kit.app
 import omni.timeline
-import carb
-from isaaclab.envs.ui import ViewportCameraController 
+from isaaclab.envs.ui import ViewportCameraController
 
 if TYPE_CHECKING:
-    from parkour_isaaclab.envs import  ParkourManagerBasedEnv
     from isaaclab.envs import ViewerCfg
+
+    from parkour_isaaclab.envs import ParkourManagerBasedEnv
+
 
 class ParkourViewportCameraController(ViewportCameraController):
     """
-    Viewport Camera Controller with Keyboard 
-    reference: 
+    Viewport Camera Controller with Keyboard
+    reference:
         https://docs.omniverse.nvidia.com/dev-guide/latest/programmer_ref/input-devices/keyboard.html
     """
+
     def __init__(self, env: ParkourManagerBasedEnv, cfg: ViewerCfg):
         self._env = env
         self._cfg = copy.deepcopy(cfg)
@@ -50,7 +53,7 @@ class ParkourViewportCameraController(ViewportCameraController):
         self._appwindow = omni.appwindow.get_default_app_window()
         self._input = carb.input.acquire_input_interface()
         self._keyboard = self._appwindow.get_keyboard()
-        self.free_cam_trigger = False 
+        self.free_cam_trigger = False
         self.is_free_cam = False
 
         self._keyboard_sub = self._input.subscribe_to_keyboard_events(
@@ -74,45 +77,54 @@ class ParkourViewportCameraController(ViewportCameraController):
         # apply the command when pressed
         if event.type == carb.input.KeyboardEventType.KEY_PRESS:
             if event.input.name == "NUMPAD_7" and not self.is_free_cam:
-                self.cfg.env_index  = (self.cfg.env_index - 1) % self._env.num_envs
+                self.cfg.env_index = (self.cfg.env_index - 1) % self._env.num_envs
 
             elif event.input.name in "NUMPAD_9" and not self.is_free_cam:
                 self.cfg.env_index = (self.cfg.env_index + 1) % self._env.num_envs
-        
+
             elif event.input.name in "NUMPAD_8" and not self.is_free_cam:
                 self.default_cam_eye[0] += 0.2
 
             elif event.input.name in "NUMPAD_4" and not self.is_free_cam:
                 self.default_cam_eye[1] += 0.2
-        
+
             elif event.input.name in "NUMPAD_6" and not self.is_free_cam:
                 self.default_cam_eye[2] += 0.2
-        
+
             elif event.input.name in "NUMPAD_5" and not self.is_free_cam:
                 self.default_cam_eye[0] -= 0.2
 
             elif event.input.name in "NUMPAD_2" and not self.is_free_cam:
                 self.default_cam_eye[:] = self._cfg.eye
-            
+
             if event.input.name in "NUMPAD_0":
                 """go to free cam"""
                 self.is_free_cam = True
-                self.free_cam_trigger = True 
+                self.free_cam_trigger = True
 
             elif event.input.name in "NUMPAD_1":
                 """back to root cam"""
                 self.is_free_cam = False
-                self.free_cam_trigger = False 
+                self.free_cam_trigger = False
 
     def _update_tracking_callback(self, event):
         if self.cfg.origin_type == "asset_root" and self.cfg.asset_name is not None and not self.is_free_cam:
             self.update_view_to_asset_root(self.cfg.asset_name)
-        if self.cfg.origin_type == "asset_body" and self.cfg.asset_name is not None and self.cfg.body_name is not None and not self.is_free_cam:
+        if (
+            self.cfg.origin_type == "asset_body"
+            and self.cfg.asset_name is not None
+            and self.cfg.body_name is not None
+            and not self.is_free_cam
+        ):
             self.update_view_to_asset_body(self.cfg.asset_name, self.cfg.body_name)
 
         if self.is_free_cam and self.free_cam_trigger:
-            self.free_cam_trigger = False 
-            if self.cfg.origin_type == "asset_root" and self.cfg.asset_name is not None :
+            self.free_cam_trigger = False
+            if self.cfg.origin_type == "asset_root" and self.cfg.asset_name is not None:
                 self.update_view_to_asset_root(self.cfg.asset_name)
-            if self.cfg.origin_type == "asset_body" and self.cfg.asset_name is not None and self.cfg.body_name is not None:
+            if (
+                self.cfg.origin_type == "asset_body"
+                and self.cfg.asset_name is not None
+                and self.cfg.body_name is not None
+            ):
                 self.update_view_to_asset_body(self.cfg.asset_name, self.cfg.body_name)

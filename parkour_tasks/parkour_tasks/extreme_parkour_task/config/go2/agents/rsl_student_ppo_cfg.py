@@ -1,13 +1,15 @@
-from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import (
-ParkourRslRlOnPolicyRunnerCfg,
-ParkourRslRlPpoActorCriticCfg,
-ParkourRslRlActorCfg,
-ParkourRslRlStateHistEncoderCfg,
-ParkourRslRlEstimatorCfg,
-ParkourRslRlDistillationAlgorithmCfg,
-ParkourRslRlDepthEncoderCfg
-)
 from isaaclab.utils import configclass
+
+from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import (
+    ParkourRslRlActorCfg,
+    ParkourRslRlDepthEncoderCfg,
+    ParkourRslRlDistillationAlgorithmCfg,
+    ParkourRslRlEstimatorCfg,
+    ParkourRslRlOnPolicyRunnerCfg,
+    ParkourRslRlPpoActorCriticCfg,
+    ParkourRslRlStateHistEncoderCfg,
+)
+
 
 @configclass
 class UnitreeGo2ParkourStudentPPORunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
@@ -40,24 +42,15 @@ class UnitreeGo2ParkourStudentPPORunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
         init_noise_std=1.0,
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
-        scan_encoder_dims = [128, 64, 32],
-        priv_encoder_dims = [64, 20],
+        scan_encoder_dims=[128, 64, 32],
+        priv_encoder_dims=[64, 20],
         activation="elu",
-        actor = ParkourRslRlActorCfg(
-            class_name = "Actor",
-            state_history_encoder = ParkourRslRlStateHistEncoderCfg(
-                class_name = "StateHistoryEncoder" 
-            )
-        )
+        actor=ParkourRslRlActorCfg(
+            class_name="Actor", state_history_encoder=ParkourRslRlStateHistEncoderCfg(class_name="StateHistoryEncoder")
+        ),
     )
-    estimator = ParkourRslRlEstimatorCfg(
-            hidden_dims = [128, 64]
-    )
-    depth_encoder = ParkourRslRlDepthEncoderCfg(
-        hidden_dims = 512,
-        learning_rate= 1e-3,
-        num_steps_per_env = 24*5
-    )
+    estimator = ParkourRslRlEstimatorCfg(hidden_dims=[128, 64])
+    depth_encoder = ParkourRslRlDepthEncoderCfg(hidden_dims=512, learning_rate=1e-3, num_steps_per_env=24 * 5)
 
     algorithm = ParkourRslRlDistillationAlgorithmCfg(
         value_loss_coef=1.0,
@@ -66,11 +59,10 @@ class UnitreeGo2ParkourStudentPPORunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
         entropy_coef=0.01,
         num_learning_epochs=5,
         num_mini_batches=4,
-        learning_rate = 2.e-4, 
+        learning_rate=2.0e-4,
         schedule="adaptive",
         gamma=0.99,
         lam=0.95,
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
-

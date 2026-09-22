@@ -8,54 +8,61 @@
 The functions can be passed to the :class:`isaaclab.managers.RewardTermCfg` object to
 specify the reward function and its parameters.
 """
+
 from __future__ import annotations
-import torchvision
-import torch
+
+import warnings
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
+
+import cv2
+import numpy as np
+import torch
+import torchvision
+from isaaclab.assets import Articulation
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab.sensors import ContactSensor, RayCaster, RayCasterCamera
-from isaaclab.assets import Articulation
-from isaaclab.utils.math  import euler_xyz_from_quat, wrap_to_pi, matrix_from_quat, quat_apply
-from parkour_isaaclab.envs.mdp.parkours import ParkourEvent 
-from collections.abc import Sequence
-import numpy as np
-import cv2
-import warnings
+from isaaclab.utils.math import euler_xyz_from_quat, matrix_from_quat, quat_apply, wrap_to_pi
+
+from parkour_isaaclab.envs.mdp.parkours import ParkourEvent
+
 if TYPE_CHECKING:
-    from parkour_isaaclab.envs import ParkourManagerBasedRLEnv
     from isaaclab.managers import ObservationTermCfg
+
+    from parkour_isaaclab.envs import ParkourManagerBasedRLEnv
 
 
 class ExtremeParkourObservations(ManagerTermBase):
-
     def __init__(self, cfg: ObservationTermCfg, env: ParkourManagerBasedRLEnv):
         super().__init__(cfg, env)
-        self.contact_sensor: ContactSensor = env.scene.sensors['contact_forces']
-        self.ray_sensor: RayCaster = env.scene.sensors['height_scanner']
-        self.parkour_event: ParkourEvent =  env.parkour_manager.get_term(cfg.params["parkour_name"])
+        self.contact_sensor: ContactSensor = env.scene.sensors["contact_forces"]
+        self.ray_sensor: RayCaster = env.scene.sensors["height_scanner"]
+        self.parkour_event: ParkourEvent = env.parkour_manager.get_term(cfg.params["parkour_name"])
         self.asset: Articulation = env.scene[cfg.params["asset_cfg"].name]
         self.sensor_cfg = cfg.params["sensor_cfg"]
         self.asset_cfg = cfg.params["asset_cfg"]
-        self.history_length = cfg.params['history_length']
-        self._obs_history_buffer = torch.zeros(self.num_envs, self.history_length, 3 + 2 + 3 + 4 + 36 + 5, device=self.device)
+        self.history_length = cfg.params["history_length"]
+        self._obs_history_buffer = torch.zeros(
+            self.num_envs, self.history_length, 3 + 2 + 3 + 4 + 36 + 5, device=self.device
+        )
         self.delta_yaw = torch.zeros(self.num_envs, device=self.device)
         self.delta_next_yaw = torch.zeros(self.num_envs, device=self.device)
         self.measured_heights = torch.zeros(self.num_envs, 132, device=self.device)
         self.env = env
-        self.body_id = self.asset.find_bodies('base')[0]
-        
+        self.body_id = self.asset.find_bodies("base")[0]
+
     def reset(self, env_ids: Sequence[int] | None = None) -> None:
-        self._obs_history_buffer[env_ids, :, :] = 0. 
+        self._obs_history_buffer[env_ids, :, :] = 0.0
 
     def __call__(
         self,
-        env: ParkourManagerBasedRLEnv,        
+        env: ParkourManagerBasedRLEnv,
         asset_cfg: SceneEntityCfg,
         sensor_cfg: SceneEntityCfg,
         parkour_name: str,
         history_length: int,
-        ) -> torch.Tensor:
-        
+    ) -> torch.Tensor:
+
         # 지형 타입(flat/non-flat) 플래그를 상수로 고정: 항상 non-flat=1, flat=0.
         # 원조 Extreme Parkour 는 이 플래그로 flat 고속 모드 전환을 학습시켰지만,
         # 이 프로젝트의 목표는 험지 robust 보행이고 실기에는 "지금 flat 이다"를
@@ -70,79 +77,89 @@ class ExtremeParkourObservations(ManagerTermBase):
             self.delta_yaw = self.parkour_event.target_yaw - wrap_to_pi(yaw)
             self.delta_next_yaw = self.parkour_event.next_target_yaw - wrap_to_pi(yaw)
             self.measured_heights = self._get_heights()
-        commands = env.command_manager.get_command('base_velocity')
-        obs_buf = torch.cat((
-                            self.asset.data.root_ang_vel_b * 0.25,   #[1,3] 0~2
-                            imu_obs,    #[1,2] 3~4
-                            0*self.delta_yaw[:, None],   #[1,1] 5
-                            self.delta_yaw[:, None], #[1,1] 6
-                            self.delta_next_yaw[:, None], #[1,1] 7 
-                            0*commands[:, 0:2], #[1,2] 8 
-                            commands[:, 0:1],  #[1,1] 9
-                            env_idx_tensor,
-                            invert_env_idx_tensor,
-                            self.asset.data.joint_pos - self.asset.data.default_joint_pos,
-                            self.asset.data.joint_vel * 0.05 ,
-                            env.action_manager.get_term('joint_pos').action_history_buf[:, -1],
-                            self._get_contact_fill(),
-                            ),dim=-1)
+        commands = env.command_manager.get_command("base_velocity")
+        obs_buf = torch.cat(
+            (
+                self.asset.data.root_ang_vel_b * 0.25,  # [1,3] 0~2
+                imu_obs,  # [1,2] 3~4
+                0 * self.delta_yaw[:, None],  # [1,1] 5
+                self.delta_yaw[:, None],  # [1,1] 6
+                self.delta_next_yaw[:, None],  # [1,1] 7
+                0 * commands[:, 0:2],  # [1,2] 8
+                commands[:, 0:1],  # [1,1] 9
+                env_idx_tensor,
+                invert_env_idx_tensor,
+                self.asset.data.joint_pos - self.asset.data.default_joint_pos,
+                self.asset.data.joint_vel * 0.05,
+                env.action_manager.get_term("joint_pos").action_history_buf[:, -1],
+                self._get_contact_fill(),
+            ),
+            dim=-1,
+        )
         priv_explicit = self._get_priv_explicit()
         priv_latent = self._get_priv_latent()
-        observations = torch.cat([obs_buf, #53
-                                  self.measured_heights, #132
-                                  priv_explicit, # 9
-                                  priv_latent, # 29
-                                  self._obs_history_buffer.view(self.num_envs, -1)
-                                  ],dim=-1)
+        observations = torch.cat(
+            [
+                obs_buf,  # 53
+                self.measured_heights,  # 132
+                priv_explicit,  # 9
+                priv_latent,  # 29
+                self._obs_history_buffer.view(self.num_envs, -1),
+            ],
+            dim=-1,
+        )
         obs_buf[:, 6:8] = 0
         self._obs_history_buffer = torch.where(
-            (env.episode_length_buf <= 1)[:, None, None], 
+            (env.episode_length_buf <= 1)[:, None, None],
             torch.stack([obs_buf] * self.history_length, dim=1),
-            torch.cat([
-                self._obs_history_buffer[:, 1:],
-                obs_buf.unsqueeze(1)
-            ], dim=1)
+            torch.cat([self._obs_history_buffer[:, 1:], obs_buf.unsqueeze(1)], dim=1),
         )
-        return observations 
+        return observations
 
     def _get_contact_fill(
         self,
-        ):
-        contact_forces = self.contact_sensor.data.net_forces_w_history[:, 0, self.sensor_cfg.body_ids] #(N, 4, 3)
-        contact = torch.norm(contact_forces, dim=-1) > 2.
-        previous_contact_forces = self.contact_sensor.data.net_forces_w_history[:, -1, self.sensor_cfg.body_ids] # N, 4, 3
-        last_contacts = torch.norm(previous_contact_forces, dim=-1) > 2.
-        contact_filt = torch.logical_or(contact, last_contacts) 
-        return (contact_filt.float()-0.5).to(self.device)
-    
+    ):
+        contact_forces = self.contact_sensor.data.net_forces_w_history[:, 0, self.sensor_cfg.body_ids]  # (N, 4, 3)
+        contact = torch.norm(contact_forces, dim=-1) > 2.0
+        previous_contact_forces = self.contact_sensor.data.net_forces_w_history[
+            :, -1, self.sensor_cfg.body_ids
+        ]  # N, 4, 3
+        last_contacts = torch.norm(previous_contact_forces, dim=-1) > 2.0
+        contact_filt = torch.logical_or(contact, last_contacts)
+        return (contact_filt.float() - 0.5).to(self.device)
+
     def _get_priv_explicit(
         self,
-        ):
-        base_lin_vel = self.asset.data.root_lin_vel_b 
-        return torch.cat((base_lin_vel * 2.0,
-                        0 * base_lin_vel,
-                        0 * base_lin_vel), dim=-1).to(self.device)
-    
+    ):
+        base_lin_vel = self.asset.data.root_lin_vel_b
+        return torch.cat((base_lin_vel * 2.0, 0 * base_lin_vel, 0 * base_lin_vel), dim=-1).to(self.device)
+
     def _get_priv_latent(
         self,
-        ):
-        body_mass = self.asset.root_physx_view.get_masses()[:,self.body_id].to(self.device)
-        body_com = self.asset.data.com_pos_b[:,self.body_id,:].to(self.device).squeeze(1)
-        mass_params_tensor = torch.cat([body_mass, body_com],dim=-1).to(self.device)
+    ):
+        body_mass = self.asset.root_physx_view.get_masses()[:, self.body_id].to(self.device)
+        body_com = self.asset.data.com_pos_b[:, self.body_id, :].to(self.device).squeeze(1)
+        mass_params_tensor = torch.cat([body_mass, body_com], dim=-1).to(self.device)
         friction_coeffs_tensor = self.asset.root_physx_view.get_material_properties()[:, 0, 0]
         joint_stiffness = self.asset.data.joint_stiffness.to(self.device)
         default_joint_stiffness = self.asset.data.default_joint_stiffness.to(self.device)
         joint_damping = self.asset.data.joint_damping.to(self.device)
         default_joint_damping = self.asset.data.default_joint_damping.to(self.device)
-        return torch.cat((
-            mass_params_tensor,
-            friction_coeffs_tensor.unsqueeze(1).to(self.device),
-            (joint_stiffness/ default_joint_stiffness) - 1, 
-            (joint_damping/ default_joint_damping) - 1
-        ), dim=-1).to(self.device)
-    
+        return torch.cat(
+            (
+                mass_params_tensor,
+                friction_coeffs_tensor.unsqueeze(1).to(self.device),
+                (joint_stiffness / default_joint_stiffness) - 1,
+                (joint_damping / default_joint_damping) - 1,
+            ),
+            dim=-1,
+        ).to(self.device)
+
     def _get_heights(self):
-        return torch.clip(self.ray_sensor.data.pos_w[:, 2].unsqueeze(1) - self.ray_sensor.data.ray_hits_w[..., 2] - 0.3, -1, 1).to(self.device)
+        return torch.clip(
+            self.ray_sensor.data.pos_w[:, 2].unsqueeze(1) - self.ray_sensor.data.ray_hits_w[..., 2] - 0.3, -1, 1
+        ).to(self.device)
+
 
 class elevation_map_scan(ManagerTermBase):
     """L1 LiDAR → self-hit 필터 → elevation_mapping_cupy → scandots 격자 샘플.
@@ -155,11 +172,11 @@ class elevation_map_scan(ManagerTermBase):
 
     def __init__(self, cfg: ObservationTermCfg, env: ParkourManagerBasedRLEnv):
         super().__init__(cfg, env)
-        from parkour_isaaclab.sensors import GO2_SELF_FILTER_CAPSULES
         from parkour_isaaclab.envs.mdp.elevation_map_backend import (
             BatchedElevationMapBackend,
             ElevationMapBackend,
         )
+        from parkour_isaaclab.sensors import GO2_SELF_FILTER_CAPSULES
 
         self.env = env
         self.lidar = env.scene.sensors[cfg.params["sensor_cfg"].name]
@@ -199,9 +216,7 @@ class elevation_map_scan(ManagerTermBase):
         # "batched"(기본): 커널 배치판 — 192 env 기준 tick 당 수 ms.
         # "loop": em_cupy 인스턴스 직렬 루프 — 회귀 비교/디버깅용 (250ms/tick).
         backend_cls = (
-            BatchedElevationMapBackend
-            if cfg.params.get("em_backend", "batched") == "batched"
-            else ElevationMapBackend
+            BatchedElevationMapBackend if cfg.params.get("em_backend", "batched") == "batched" else ElevationMapBackend
         )
         self.backend = backend_cls(
             num_envs=self.num_envs,
@@ -357,9 +372,7 @@ class elevation_map_scan(ManagerTermBase):
             az = az + torch.randn_like(az) * self.ray_dir_std_rad
             el = (el + torch.randn_like(el) * self.ray_dir_std_rad).clamp(-1.5707, 1.5707)
             cos_el = torch.cos(el)
-            dirs_sensor = torch.stack(
-                [cos_el * torch.cos(az), cos_el * torch.sin(az), torch.sin(el)], dim=-1
-            )
+            dirs_sensor = torch.stack([cos_el * torch.cos(az), cos_el * torch.sin(az), torch.sin(el)], dim=-1)
         points_sensor = dirs_sensor * t_hit.unsqueeze(-1)
 
         # odometry drift — EM 이 아는 "odom frame 상의 pose" 에만 건다.
@@ -411,9 +424,7 @@ class elevation_map_scan(ManagerTermBase):
             ],
             dim=1,
         )
-        R_err = torch.bmm(
-            torch.eye(3, device=self.device).expand(self.num_envs, 3, 3) + skew_rp, R_z
-        )
+        R_err = torch.bmm(torch.eye(3, device=self.device).expand(self.num_envs, 3, 3) + skew_rp, R_z)
         R_s_n = torch.bmm(R_err, R_s)
         t_s_n = t_s + self._odom_pos_err
         base_pos_n = base_pos + self._odom_pos_err
@@ -437,23 +448,19 @@ class elevation_map_scan(ManagerTermBase):
 
 
 class image_features(ManagerTermBase):
-    
     def __init__(self, cfg: ObservationTermCfg, env: ParkourManagerBasedRLEnv):
         super().__init__(cfg, env)
         self.camera_sensor: RayCasterCamera = env.scene[cfg.params["sensor_cfg"].name]
         self.clipping_range = self.camera_sensor.cfg.max_distance
         resized = cfg.params["resize"]
-        self.buffer_len = cfg.params['buffer_len']
-        self.debug_vis = cfg.params['debug_vis']
+        self.buffer_len = cfg.params["buffer_len"]
+        self.debug_vis = cfg.params["debug_vis"]
         # cv2.imshow 가 가능한 환경인지. 첫 실패 시 False 로 내려간다.
         self._can_show = True
         self.resize_transform = torchvision.transforms.Resize(
-                                    (resized[0], resized[1]), 
-                                    interpolation=torchvision.transforms.InterpolationMode.BICUBIC).to(env.device)
-        self.depth_buffer = torch.zeros(self.num_envs,  
-                                        self.buffer_len, 
-                                        resized[0], 
-                                        resized[1]).to(self.device)
+            (resized[0], resized[1]), interpolation=torchvision.transforms.InterpolationMode.BICUBIC
+        ).to(env.device)
+        self.depth_buffer = torch.zeros(self.num_envs, self.buffer_len, resized[0], resized[1]).to(self.device)
 
     def reset(self, env_ids: Sequence[int] | None = None) -> None:
         if env_ids is None:
@@ -461,22 +468,23 @@ class image_features(ManagerTermBase):
         depth_images = self.camera_sensor.data.output["distance_to_camera"].squeeze(-1)[env_ids]
         for depth_image, env_id in zip(depth_images, env_ids):
             processed_image = self._process_depth_image(depth_image)
-            self.depth_buffer[env_id] = torch.stack([processed_image]* 2, dim=0)
+            self.depth_buffer[env_id] = torch.stack([processed_image] * 2, dim=0)
 
     def __call__(
         self,
-        env: ParkourManagerBasedRLEnv,        
+        env: ParkourManagerBasedRLEnv,
         sensor_cfg: SceneEntityCfg,
-        resize: tuple(int,int), 
+        resize: tuple(int, int),
         buffer_len: int,
-        debug_vis:bool
-        ):
+        debug_vis: bool,
+    ):
         if env.common_step_counter % 5 == 0:
             depth_images = self.camera_sensor.data.output["distance_to_camera"].squeeze(-1)
             for env_id, depth_image in enumerate(depth_images):
                 processed_image = self._process_depth_image(depth_image)
-                self.depth_buffer[env_id] = torch.cat([self.depth_buffer[env_id, 1:], 
-                                                    processed_image.to(self.device).unsqueeze(0)], dim=0)
+                self.depth_buffer[env_id] = torch.cat(
+                    [self.depth_buffer[env_id, 1:], processed_image.to(self.device).unsqueeze(0)], dim=0
+                )
         if self.debug_vis and self._can_show:
             depth_images_np = self.depth_buffer[:, -2].detach().cpu().numpy()
             depth_images_norm = []
@@ -485,7 +493,7 @@ class image_features(ManagerTermBase):
             rows = []
             ncols = 4
             for i in range(0, len(depth_images_norm), ncols):
-                chunk = list(depth_images_norm[i:i+ncols])
+                chunk = list(depth_images_norm[i : i + ncols])
                 # 마지막 행이 ncols 개를 못 채우면 행마다 폭이 달라져 vstack 이 실패한다.
                 # (num_envs=5 -> 4 + 1 이면 348 vs 87 로 어긋난다.)
                 # 빈 칸을 0 으로 채워 폭을 맞춘다.
@@ -516,5 +524,5 @@ class image_features(ManagerTermBase):
 
     def _normalize_depth_image(self, depth_image):
         depth_image = depth_image  # make similiar to scandot
-        depth_image = (depth_image) / (self.clipping_range)  - 0.5
+        depth_image = (depth_image) / (self.clipping_range) - 0.5
         return depth_image

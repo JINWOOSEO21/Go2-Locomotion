@@ -1,16 +1,21 @@
 import os
 
 from isaaclab.utils import configclass
+
+# isort: skip
+from parkour_isaaclab.envs import ParkourManagerBasedRLEnvCfg
+from parkour_isaaclab.terrains.extreme_parkour.config.parkour import apply_terrain_preset
+
 ##
 # Pre-defined configs
 ##
 from parkour_isaaclab.terrains.extreme_parkour.extreme_parkour_terrains_cfg import ExtremeParkourRoughTerrainCfg
-from parkour_isaaclab.terrains.extreme_parkour.config.parkour import apply_terrain_preset
-# isort: skip
-from parkour_isaaclab.envs import ParkourManagerBasedRLEnvCfg
-from .parkour_mdp_cfg import * 
-from parkour_tasks.default_cfg import  CAMERA_USD_CFG, CAMERA_CFG, RECORD_CAMERA_CFG, VIEWER
+from parkour_tasks.default_cfg import CAMERA_CFG, CAMERA_USD_CFG, RECORD_CAMERA_CFG, VIEWER
+
+from .parkour_mdp_cfg import *
 from .parkour_teacher_cfg import ParkourTeacherSceneCfg
+
+
 @configclass
 class ParkourStudentSceneCfg(ParkourTeacherSceneCfg):
     depth_camera = CAMERA_CFG
@@ -21,7 +26,6 @@ class ParkourStudentSceneCfg(ParkourTeacherSceneCfg):
     # student 씬은 예전부터 이걸 상시로 들고 있고, 학습 경로에서는 train.py 가
     # env_cfg.scene.record_camera = None 으로 떼어낸다.
     record_camera = RECORD_CAMERA_CFG
-
 
     def __post_init__(self):
         super().__post_init__()
@@ -37,14 +41,13 @@ class ParkourStudentSceneCfg(ParkourTeacherSceneCfg):
         # 원래의 원조 5종 분포로 되돌리려면 "student_train" 으로 바꾸면 된다.
         apply_terrain_preset(self.terrain.terrain_generator, "trapezoid_train")
         # gap/hurdle/step 은 코스 중심선을 살짝 흔든다 ('parkour' 는 자체 y_range 를 쓴다).
-        for key in ('parkour_gap', 'parkour_hurdle', 'parkour_step'):
+        for key in ("parkour_gap", "parkour_hurdle", "parkour_step"):
             self.terrain.terrain_generator.sub_terrains[key].y_range = (-0.1, 0.1)
-
 
 
 @configclass
 class UnitreeGo2StudentParkourEnvCfg(ParkourManagerBasedRLEnvCfg):
-    scene: ParkourStudentSceneCfg = ParkourStudentSceneCfg(num_envs=192, env_spacing=1.)
+    scene: ParkourStudentSceneCfg = ParkourStudentSceneCfg(num_envs=192, env_spacing=1.0)
     # Basic settings
     observations: StudentObservationsCfg = StudentObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -82,16 +85,16 @@ class UnitreeGo2StudentParkourEnvCfg(ParkourManagerBasedRLEnvCfg):
         self.actions.joint_pos.history_length = 8
 
 
-
 @configclass
 class UnitreeGo2StudentParkourEnvCfg_EVAL(UnitreeGo2StudentParkourEnvCfg):
-    viewer = VIEWER 
+    viewer = VIEWER
     rewards: TeacherRewardsCfg = TeacherRewardsCfg()
+
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
         self.scene.num_envs = 256
-        self.episode_length_s = 20.
+        self.episode_length_s = 20.0
         self.commands.base_velocity.debug_vis = True
 
         self.scene.depth_camera_usd = CAMERA_USD_CFG
@@ -102,36 +105,37 @@ class UnitreeGo2StudentParkourEnvCfg_EVAL(UnitreeGo2StudentParkourEnvCfg):
         # 관측으로 받으므로 teacher PLAY/EVAL 과 같은 것을 보여 준다.
         self.parkours.base_parkour.debug_vis = True
 
-        self.observations.depth_camera.depth_cam.params['debug_vis'] = True
+        self.observations.depth_camera.depth_cam.params["debug_vis"] = True
 
-        self.commands.base_velocity.resampling_time_range = (60.,60.)
+        self.commands.base_velocity.resampling_time_range = (60.0, 60.0)
         self.commands.base_velocity.debug_vis = True
 
         if self.scene.terrain.terrain_generator is not None:
             self.scene.terrain.terrain_generator.num_rows = 5
             self.scene.terrain.terrain_generator.num_cols = 5
             self.scene.terrain.terrain_generator.random_difficulty = True
-            self.scene.terrain.terrain_generator.difficulty_range = (0.0,1.0)
+            self.scene.terrain.terrain_generator.difficulty_range = (0.0, 1.0)
         self.events.randomize_rigid_body_com = None
         self.events.randomize_rigid_body_mass = None
-        self.events.push_by_setting_velocity.interval_range_s = (6.,6.)
-        self.events.random_camera_position.params['rot_noise_range'] = {'pitch':(0, 1)}
-        
+        self.events.push_by_setting_velocity.interval_range_s = (6.0, 6.0)
+        self.events.random_camera_position.params["rot_noise_range"] = {"pitch": (0, 1)}
+
         # 실전 장애물 8종 균등 (flat/demo 제외) — 기존 else 블록과 같은 분포다.
         apply_terrain_preset(
-            self.scene.terrain.terrain_generator, "all_obstacles",
+            self.scene.terrain.terrain_generator,
+            "all_obstacles",
             active_overrides={"noise_range": (0.02, 0.02)},
         )
 
+
 @configclass
 class UnitreeGo2StudentParkourEnvCfg_PLAY(UnitreeGo2StudentParkourEnvCfg_EVAL):
-
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
 
         self.scene.num_envs = 16
-        self.episode_length_s = 60.
+        self.episode_length_s = 60.0
 
         if self.scene.terrain.terrain_generator is not None:
             # 난이도 스윕용. PARKOUR_DIFFICULTY 를 주면 그 값으로 고정된다.
@@ -161,8 +165,8 @@ class UnitreeGo2StudentParkourEnvCfg_PLAY(UnitreeGo2StudentParkourEnvCfg_EVAL):
         # (커리큘럼 컬럼→지형 매핑이 1:1 로 떨어지는 조건). 프리셋에 지형을 더하면
         # 컬럼 수도 같이 늘어나므로 num_cols 를 따로 맞출 필요가 없다.
         apply_terrain_preset(
-            self.scene.terrain.terrain_generator, "trapezoid_only",
+            self.scene.terrain.terrain_generator,
+            "trapezoid_only",
             one_col_per_terrain=True,
             active_overrides={"noise_range": (0.02, 0.02)},
         )
-

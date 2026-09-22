@@ -4,11 +4,13 @@ Code reference:
 2. https://docs.omniverse.nvidia.com/kit/docs/carbonite/167.3/api/enum_namespacecarb_1_1input_1af1c4ed7e318b3719809f13e2a48e2f2d.html#namespacecarb_1_1input_1af1c4ed7e318b3719809f13e2a48e2f2d
 3. https://docs.omniverse.nvidia.com/kit/docs/carbonite/167.3/docs/python/bindings.html#carb.input.GamepadInput
 """
+
 import argparse
 import os
 import sys
 import time
 import weakref
+
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 import cli_args  # isort: skip
 from isaaclab.app import AppLauncher
@@ -70,7 +72,15 @@ parser.add_argument(
 # 'demo.mp4' 를 만들어 버린다.
 _DEFAULT_VIDEO_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    "..", "..", "logs", "rsl_rl", "unitree_go2_parkour", "student_pretrained", "videos", "demo", "",
+    "..",
+    "..",
+    "logs",
+    "rsl_rl",
+    "unitree_go2_parkour",
+    "student_pretrained",
+    "videos",
+    "demo",
+    "",
 )
 
 parser.add_argument(
@@ -92,7 +102,7 @@ parser.add_argument(
     help=(
         "Paste the depth map the policy actually consumes onto the right of each recorded frame, "
         "so one video shows the robot and its depth input side by side (same panel as "
-        "play.py --multicam --with_depth). Student (distillation) tasks only."
+        "play.py --multicam --panels). Student (distillation) tasks only."
     ),
 )
 parser.add_argument(
@@ -112,8 +122,16 @@ parser.add_argument(
     type=str,
     default=None,
     choices=[
-        "gap", "hurdle", "step", "parkour", "flat", "demo",
-        "pyramid", "pyramid_up", "discrete", "grid",
+        "gap",
+        "hurdle",
+        "step",
+        "parkour",
+        "flat",
+        "demo",
+        "pyramid",
+        "pyramid_up",
+        "discrete",
+        "grid",
     ],
     help=(
         "Spawn every robot on this one sub-terrain instead of the default mix. "
@@ -144,33 +162,29 @@ app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 """Rest everything follows."""
-import numpy as np
-import torch
-
 import carb
+import isaaclab.sim as sim_utils
+import numpy as np
 import omni
+import torch
+from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, retrieve_file_path
+from isaaclab.utils.math import quat_apply, quat_from_euler_xyz, wrap_to_pi
+from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 from omni.kit.viewport.utility import get_viewport_from_window_name
 from omni.kit.viewport.utility.camera_state import ViewportCameraState
 from pxr import Gf, Sdf
-from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
 
-from parkour_isaaclab.envs import (
-ParkourManagerBasedRLEnv
-)
-import isaaclab.sim as sim_utils
-from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
-from isaaclab.utils.math import quat_apply, quat_from_euler_xyz, wrap_to_pi
-from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, retrieve_file_path
+from parkour_isaaclab.envs import ParkourManagerBasedRLEnv
+from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
+from parkour_tasks.extreme_parkour_task.config.go2.parkour_student_cfg import UnitreeGo2StudentParkourEnvCfg_PLAY
+from parkour_tasks.extreme_parkour_task.config.go2.parkour_teacher_cfg import UnitreeGo2TeacherParkourEnvCfg_PLAY
 from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
-from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
 from scripts.rsl_rl.keyboard_teleop import KeyboardTeleop, KeyboardTeleopState
 from scripts.rsl_rl.mjpeg_server import MjpegStreamer
+from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
+from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
 from scripts.rsl_rl.video_overlay import depth_to_panel
-from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
-
-from parkour_tasks.extreme_parkour_task.config.go2.parkour_teacher_cfg import UnitreeGo2TeacherParkourEnvCfg_PLAY
-from parkour_tasks.extreme_parkour_task.config.go2.parkour_student_cfg import UnitreeGo2StudentParkourEnvCfg_PLAY
 
 # --terrain 값 -> terrain_generator.sub_terrains 의 키.
 _TERRAIN_KEYS = {
@@ -235,9 +249,13 @@ class ParkourDemoGO2:
             # student_pretrained/ 바로 아래의 승격된 checkpoint 우선, 없으면 최근 하위 run.
             checkpoint = get_checkpoint_path_with_fallback(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
-        self.agent_cfg = agent_cfg 
+        self.agent_cfg = agent_cfg
         # create envionrment
-        env_cfg = UnitreeGo2TeacherParkourEnvCfg_PLAY() if agent_cfg.algorithm.class_name == 'PPOWithExtractor' else UnitreeGo2StudentParkourEnvCfg_PLAY()
+        env_cfg = (
+            UnitreeGo2TeacherParkourEnvCfg_PLAY()
+            if agent_cfg.algorithm.class_name == "PPOWithExtractor"
+            else UnitreeGo2StudentParkourEnvCfg_PLAY()
+        )
         env_cfg.scene.num_envs = args_cli.num_envs
         env_cfg.episode_length_s = 1000000
         env_cfg.curriculum = None
@@ -257,20 +275,19 @@ class ParkourDemoGO2:
                 env_cfg.scene.record_camera = None
         self.env_cfg = env_cfg
         # wrap around environment for rsl-rl
-        self.env =  ParkourRslRlVecEnvWrapper(ParkourManagerBasedRLEnv(cfg=env_cfg))
+        self.env = ParkourRslRlVecEnvWrapper(ParkourManagerBasedRLEnv(cfg=env_cfg))
         self.device = self.env.unwrapped.device
         # load previously trained model
         ppo_runner = OnPolicyRunnerWithExtractor(self.env, agent_cfg.to_dict(), log_dir=None, device=self.device)
         ppo_runner.load(checkpoint)
         # obtain the trained policy for inference
         self.estimator = ppo_runner.get_estimator_inference_policy(device=self.device)
-        if agent_cfg.algorithm.class_name == 'PPOWithExtractor':
+        if agent_cfg.algorithm.class_name == "PPOWithExtractor":
             self.policy = ppo_runner.get_inference_policy(device=self.device)
             self.depth_encoder = None
         else:
             self.policy = ppo_runner.get_inference_depth_policy(device=self.device)
             self.depth_encoder = ppo_runner.get_depth_encoder_inference_policy(device=self.device)
-
 
         self.create_camera()
         self.commands = torch.zeros(env_cfg.scene.num_envs, 3, device=self.device)
@@ -292,7 +309,7 @@ class ParkourDemoGO2:
         self._previous_selected_id = None
         self._follow_camera_applied = False
         # self._camera_local_transform = torch.tensor([-2.5, 0.0, 0.8], device=self.device)
-        self._camera_local_transform = torch.tensor([-0., 2.6, 1.6], device=self.device)
+        self._camera_local_transform = torch.tensor([-0.0, 2.6, 1.6], device=self.device)
         # _selected_id 를 쓰므로 그 뒤에 만든다.
         self.set_up_teleop_marker()
 
@@ -401,7 +418,7 @@ class ParkourDemoGO2:
         if self.record_depth and self.last_depth is not None:
             # 정책 호출에 쓴 것과 같은 텐서를 그대로 그린다. depth 버퍼는 5 스텝마다
             # 갱신되므로 사이 스텝에서는 직전 프레임이 유지되는데, 그게 정책이 실제로
-            # 보고 있는 입력이다. play.py --multicam --with_depth 와 같은 패널이다.
+            # 보고 있는 입력이다. play.py --multicam --panels 와 같은 패널이다.
             panel = depth_to_panel(self.last_depth[idx].detach().cpu().numpy(), frame.shape[0])
             frame = np.hstack([frame, panel])
         if self.mjpeg is not None:
@@ -605,7 +622,7 @@ class ParkourDemoGO2:
             # backward command
             carb.input.GamepadInput.LEFT_STICK_DOWN: self.env_cfg.commands.base_velocity.ranges.lin_vel_x[0],
             # right command
-            carb.input.GamepadInput.LEFT_STICK_RIGHT:  self.env_cfg.commands.base_velocity.ranges.heading[0],
+            carb.input.GamepadInput.LEFT_STICK_RIGHT: self.env_cfg.commands.base_velocity.ranges.heading[0],
             # left command
             carb.input.GamepadInput.LEFT_STICK_LEFT: self.env_cfg.commands.base_velocity.ranges.heading[1],
         }
@@ -633,7 +650,7 @@ class ParkourDemoGO2:
         # On key release, the robot stops moving
         elif event.type == carb.input.GamepadConnectionEventType.DISCONNECTED:
             if self._selected_id:
-                self.commands[self._selected_id] = torch.zeros(1,3).to(self.device)
+                self.commands[self._selected_id] = torch.zeros(1, 3).to(self.device)
 
     def update_selected_object(self):
         self._previous_selected_id = self._selected_id
@@ -689,6 +706,7 @@ class ParkourDemoGO2:
         camera_state.set_position_world(eye, True)
         camera_state.set_target_world(target, True)
 
+
 def main():
     """Main function."""
     demo_go2 = ParkourDemoGO2()
@@ -732,7 +750,6 @@ def run_loop(demo_go2, obs, extras, num_prop, num_scan, num_priv_explicit):
         # 마커 갱신은 USD 쓰기라 inference_mode 블록 밖에서 한다.
         demo_go2.update_teleop_marker()
         with torch.inference_mode():
-
             # obs index 9(command velocity)는 건드리지 않는다. 환경의 command manager 가
             # 정한 값이 관측에 이미 들어 있고, 사용자는 방향만 조작한다.
             # 게임패드 모드는 기존 동작을 그대로 유지한다.
@@ -740,7 +757,7 @@ def run_loop(demo_go2, obs, extras, num_prop, num_scan, num_priv_explicit):
                 obs[:, 9] = demo_go2.commands[:, 0]
             if demo_go2.agent_cfg.algorithm.class_name != "DistillationWithExtractor":
                 priv_states_estimated = demo_go2.estimator.inference(obs[:, :num_prop])
-                obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = priv_states_estimated
+                obs[:, num_prop + num_scan : num_prop + num_scan + num_priv_explicit] = priv_states_estimated
                 demo_go2.apply_teleop_yaw(obs)
                 # hist_encoding=True 는 priv_latent 대신 관측 히스토리 인코더가 뽑은
                 # latent 를 쓴다는 뜻이다(RMA 의 adaptation module 경로). 실기에서는
@@ -748,7 +765,7 @@ def run_loop(demo_go2, obs, extras, num_prop, num_scan, num_priv_explicit):
                 # 쓴다. 기본값 False 로 두면 데모만 특권 정보를 보는 셈이라 맞춘다.
                 action = demo_go2.policy(obs, hist_encoding=True)
             else:
-                depth_camera = extras["observations"]['depth_camera'].to(demo_go2.device)
+                depth_camera = extras["observations"]["depth_camera"].to(demo_go2.device)
                 # --with_depth 녹화용. 정책에 먹인 바로 그 텐서를 넘겨 준다.
                 demo_go2.last_depth = depth_camera
                 # 5 스텝에 한 번만 인코더를 돌린다(학습/ play.py 와 같은 주기). 첫 스텝은
@@ -772,6 +789,7 @@ def run_loop(demo_go2, obs, extras, num_prop, num_scan, num_priv_explicit):
             obs, _, _, extras = demo_go2.env.step(action)
             demo_go2.publish_frame()
             demo_go2.tick_fps()
+
 
 if __name__ == "__main__":
     try:

@@ -5,11 +5,11 @@
 
 from __future__ import annotations
 
-import torch
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import omni.log
+import torch
 from isaaclab.actuators.actuator_pd import IdealPDActuator
 from isaaclab.utils.types import ArticulationActions
 
@@ -31,7 +31,9 @@ class ParkourDCMotor(IdealPDActuator):
         super().__init__(cfg, *args, **kwargs)
         if self.cfg.saturation_effort is not None:
             if isinstance(self.cfg.saturation_effort, dict):
-                self._saturation_effort = self._parse_joint_parameter(self.cfg.saturation_effort, torch.zeros_like(self.computed_effort))
+                self._saturation_effort = self._parse_joint_parameter(
+                    self.cfg.saturation_effort, torch.zeros_like(self.computed_effort)
+                )
             else:
                 self._saturation_effort = self.cfg.saturation_effort
         else:
@@ -42,15 +44,14 @@ class ParkourDCMotor(IdealPDActuator):
         self._zeros_effort = torch.zeros_like(self.computed_effort)
         # check that quantities are provided
         # if self.cfg.velocity_limit is None:
-        #     pass 
-
+        #     pass
 
     def compute(
         self, control_action: ArticulationActions, joint_pos: torch.Tensor, joint_vel: torch.Tensor
     ) -> ArticulationActions:
         # save current joint vel
         self._joint_vel[:] = joint_vel
-        # calculate the desired joint 
+        # calculate the desired joint
         error_pos = control_action.joint_positions - joint_pos
         error_vel = control_action.joint_velocities - joint_vel
         # calculate the desired joint torques
@@ -62,14 +63,13 @@ class ParkourDCMotor(IdealPDActuator):
         control_action.joint_positions = None
         control_action.joint_velocities = None
         return control_action
-    
+
     def _clip_effort(self, effort: torch.Tensor) -> torch.Tensor:
         if self.cfg.saturation_effort is not None:
             max_effort = self._saturation_effort * (1.0 - self._joint_vel / self.velocity_limit)
             max_effort = torch.clip(max_effort, min=self._zeros_effort, max=self.effort_limit)
             min_effort = self._saturation_effort * (-1.0 - self._joint_vel / self.velocity_limit)
-            min_effort = torch.clip(min_effort, min=-self.effort_limit, max=self._zeros_effort)           
+            min_effort = torch.clip(min_effort, min=-self.effort_limit, max=self._zeros_effort)
             return torch.clip(effort, min=min_effort, max=max_effort)
         else:
             return super()._clip_effort(effort)
-

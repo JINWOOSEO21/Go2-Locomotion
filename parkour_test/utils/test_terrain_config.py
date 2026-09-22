@@ -1,4 +1,4 @@
-from parkour_isaaclab.terrains.extreme_parkour.extreme_parkour_terrains_cfg import *  
+from parkour_isaaclab.terrains.extreme_parkour.extreme_parkour_terrains_cfg import *
 from parkour_isaaclab.terrains.parkour_terrain_generator_cfg import ParkourTerrainGeneratorCfg
 
 PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
@@ -12,17 +12,16 @@ PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
     slope_threshold=1.5,
     difficulty_range=(0.0, 1.0),
     use_cache=False,
-    num_goals = 8,
-    curriculum= True,
+    num_goals=8,
+    curriculum=True,
     sub_terrains={
-
         "parkour_gap": ExtremeParkourGapTerrainCfg(
-                        proportion=0.2,
-                        apply_roughness=True,
-                        x_range = (0.8, 1.5),
-                        y_range = (-0.1, 0.1),
-                        half_valid_width = (0.6, 1.2),
-                        )
+            proportion=0.2,
+            apply_roughness=True,
+            x_range=(0.8, 1.5),
+            y_range=(-0.1, 0.1),
+            half_valid_width=(0.6, 1.2),
+        )
         # "parkour_hurdle": ExtremeParkourHurdleTerrainCfg(
         #                 proportion=0.2,
         #                 apply_roughness=True,
@@ -31,7 +30,6 @@ PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
         #                 half_valid_width = (0.4,0.8),
         #                 hurdle_height_range= '0.1+0.1*difficulty, 0.15+0.25*difficulty'
         #                 ),
-
         # "parkour_flat": ExtremeParkourHurdleTerrainCfg(
         #                 proportion=0.2,
         #                 apply_roughness=True,
@@ -41,7 +39,6 @@ PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
         #                 half_valid_width = (0.4,0.8),
         #                 hurdle_height_range= '0.1+0.1*difficulty, 0.15+0.15*difficulty'
         #                 ),
-
         # "parkour_step": ExtremeParkourStepTerrainCfg(
         #                 proportion=0.2,
         #                 apply_roughness=True,
@@ -49,21 +46,15 @@ PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
         #                 y_range = (-0.1, 0.1),
         #                 half_valid_width = (0.5, 1)
         #                 ),
-
         # "parkour": ExtremeParkourTerrainCfg(
         #                 proportion=0.2,
         #                 apply_roughness=True,
         #                 y_range = (-0.1, 0.1),
-
-
         #                 ),
         # "parkour_demo": ExtremeParkourDemoTerrainCfg(
         #         y_range = (-0.1, 0.1),
         #         proportion=0.0,
         #         apply_roughness=True,
         #         ),
-
-
-
     },
 )

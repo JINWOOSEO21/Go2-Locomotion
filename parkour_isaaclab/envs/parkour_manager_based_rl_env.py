@@ -6,21 +6,26 @@
 # needed to import for allowing type-hinting: np.ndarray | None
 from __future__ import annotations
 
-import gymnasium as gym
-from .parkour_manager_based_rl_env_cfg import ParkourManagerBasedRLEnvCfg
-from .parkour_manager_based_env import ParkourManagerBasedEnv
-from isaaclab.ui.widgets import ManagerLiveVisualizer
-from isaacsim.core.version import get_version
-from isaaclab.managers import CommandManager, CurriculumManager, TerminationManager
-from isaaclab.envs.common import VecEnvStepReturn
+import math
 from collections.abc import Sequence
 from typing import Any, ClassVar
-import math, torch   
-import numpy as np 
+
+import gymnasium as gym
+import numpy as np
+import torch
+from isaaclab.envs.common import VecEnvStepReturn
+from isaaclab.managers import CommandManager, CurriculumManager, TerminationManager
+from isaaclab.ui.widgets import ManagerLiveVisualizer
+from isaacsim.core.version import get_version
+
 from parkour_isaaclab.managers.parkour_reward_manager import ParkourRewardManager
 
+from .parkour_manager_based_env import ParkourManagerBasedEnv
+from .parkour_manager_based_rl_env_cfg import ParkourManagerBasedRLEnvCfg
+
+
 class ParkourManagerBasedRLEnv(ParkourManagerBasedEnv, gym.Env):
-    is_vector_env: ClassVar[bool] = True 
+    is_vector_env: ClassVar[bool] = True
     metadata: ClassVar[dict[str, Any]] = {
         "render_modes": [None, "human", "rgb_array"],
         "isaac_sim_version": get_version(),
@@ -42,7 +47,7 @@ class ParkourManagerBasedRLEnv(ParkourManagerBasedEnv, gym.Env):
         # note: this order is important since observation manager needs to know the command and action managers
         # and the reward manager needs to know the termination manager
         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
-        
+
         # -- command manager
 
         self.command_manager: CommandManager = CommandManager(self.cfg.commands, self)
@@ -81,7 +86,6 @@ class ParkourManagerBasedRLEnv(ParkourManagerBasedEnv, gym.Env):
             "reward_manager": ManagerLiveVisualizer(manager=self.reward_manager),
         }
 
-
     @property
     def max_episode_length_s(self) -> float:
         """Maximum episode length in seconds."""
@@ -91,7 +95,7 @@ class ParkourManagerBasedRLEnv(ParkourManagerBasedEnv, gym.Env):
     def max_episode_length(self) -> int:
         """Maximum episode length in environment steps."""
         return math.ceil(self.max_episode_length_s / self.step_dt)
-    
+
     def step(self, action: torch.Tensor) -> VecEnvStepReturn:
         # process actions
         self.action_manager.process_action(action.to(self.device))
@@ -113,7 +117,7 @@ class ParkourManagerBasedRLEnv(ParkourManagerBasedEnv, gym.Env):
             if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
                 self.sim.render()
             self.scene.update(dt=self.physics_dt)
-        
+
         self.parkour_manager.compute(dt=self.step_dt)
         # post-step:
         # -- update env counters (used for curriculum generation)
@@ -127,14 +131,14 @@ class ParkourManagerBasedRLEnv(ParkourManagerBasedEnv, gym.Env):
         # -- reward computation
         reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         self.reward_buf = self.reward_manager.compute(dt=self.step_dt)
-        
+
         if len(self.recorder_manager.active_terms) > 0:
             # update observations for recording if needed
             self.obs_buf = self.observation_manager.compute()
             self.recorder_manager.record_post_step()
 
         # -- reset envs that terminated/timed-out and log the episode information
-        
+
         if len(reset_env_ids) > 0:
             # trigger recorder terms for pre-reset calls
             self.recorder_manager.record_pre_reset(reset_env_ids)
@@ -151,7 +155,7 @@ class ParkourManagerBasedRLEnv(ParkourManagerBasedEnv, gym.Env):
             # trigger recorder terms for post-reset calls
             self.recorder_manager.record_post_reset(reset_env_ids)
         self.command_manager.compute(dt=self.step_dt)
-        self.parkour_manager() ##Just calling parkour mananger for using '_gather_cur_goal' attribute 
+        self.parkour_manager()  ##Just calling parkour mananger for using '_gather_cur_goal' attribute
 
         # -- update command
         # -- step interval events
@@ -163,7 +167,6 @@ class ParkourManagerBasedRLEnv(ParkourManagerBasedEnv, gym.Env):
 
         # return observations, rewards, resets and extras
         return self.obs_buf, self.reward_buf, self.reset_terminated, self.reset_time_outs, self.extras
-
 
     def render(self, recompute: bool = False) -> np.ndarray | None:
         # run a rendering step of the simulator
@@ -231,10 +234,12 @@ class ParkourManagerBasedRLEnv(ParkourManagerBasedEnv, gym.Env):
             if has_concatenated_obs:
                 self.single_observation_space[group_name] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=group_dim)
             else:
-                self.single_observation_space[group_name] = gym.spaces.Dict({
-                    term_name: gym.spaces.Box(low=-np.inf, high=np.inf, shape=term_dim)
-                    for term_name, term_dim in zip(group_term_names, group_dim)
-                })
+                self.single_observation_space[group_name] = gym.spaces.Dict(
+                    {
+                        term_name: gym.spaces.Box(low=-np.inf, high=np.inf, shape=term_dim)
+                        for term_name, term_dim in zip(group_term_names, group_dim)
+                    }
+                )
         # action space (unbounded since we don't impose any limits)
         action_dim = sum(self.action_manager.action_term_dim)
         self.single_action_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(action_dim,))

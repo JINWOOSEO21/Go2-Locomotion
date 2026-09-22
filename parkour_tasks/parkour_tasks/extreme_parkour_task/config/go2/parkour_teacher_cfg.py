@@ -1,6 +1,6 @@
-
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
 from isaaclab.utils import configclass
+
 ##
 # Pre-defined configs
 ##
@@ -9,8 +9,10 @@ from parkour_isaaclab.terrains.extreme_parkour.config.parkour import (  # isort:
     apply_terrain_preset,
 )
 from parkour_isaaclab.envs import ParkourManagerBasedRLEnvCfg
-from .parkour_mdp_cfg import * 
-from parkour_tasks.default_cfg import ParkourDefaultSceneCfg, VIEWER
+from parkour_tasks.default_cfg import VIEWER, ParkourDefaultSceneCfg
+
+from .parkour_mdp_cfg import *
+
 
 @configclass
 class ParkourTeacherSceneCfg(ParkourDefaultSceneCfg):
@@ -25,15 +27,12 @@ class ParkourTeacherSceneCfg(ParkourDefaultSceneCfg):
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
     )
-    contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*",
-                                      history_length=2,
-                                      track_air_time=True,
-                                      debug_vis= False,
-                                      force_threshold=1.
-                                      )
+    contact_forces = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=2, track_air_time=True, debug_vis=False, force_threshold=1.0
+    )
     # 지형별 영상 녹화용 추격 카메라 자리. 기본은 None 이다.
     # InteractiveScene._add_entities_from_cfg 가 None 인 필드는 건너뛰므로
-    # 학습(6144 env)/EVAL/play.py 경로에는 카메라가 아예 생기지 않는다.
+    # 학습(4096 env)/EVAL/play.py 경로에는 카메라가 아예 생기지 않는다.
     # play.py --multicam 이 녹화할 때만 default_cfg.RECORD_CAMERA_CFG 를 꽂아 넣는다.
     # (필드를 미리 선언해 두는 이유는 configclass 인스턴스에 없는 속성을 나중에
     #  붙이는 것보다 이쪽이 명시적이고 to_dict 등에서도 안전하기 때문이다.)
@@ -42,10 +41,11 @@ class ParkourTeacherSceneCfg(ParkourDefaultSceneCfg):
     def __post_init__(self):
         super().__post_init__()
         self.terrain.terrain_generator = EXTREME_PARKOUR_TERRAINS_CFG
-        
+
+
 @configclass
 class UnitreeGo2TeacherParkourEnvCfg(ParkourManagerBasedRLEnvCfg):
-    scene: ParkourTeacherSceneCfg = ParkourTeacherSceneCfg(num_envs=6144, env_spacing=1.)
+    scene: ParkourTeacherSceneCfg = ParkourTeacherSceneCfg(num_envs=4096, env_spacing=1.0)
     # Basic settings
     observations: TeacherObservationsCfg = TeacherObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -78,15 +78,16 @@ class UnitreeGo2TeacherParkourEnvCfg(ParkourManagerBasedRLEnvCfg):
         self.actions.joint_pos.history_length = 1
         self.events.random_camera_position = None
 
+
 @configclass
 class UnitreeGo2TeacherParkourEnvCfg_EVAL(UnitreeGo2TeacherParkourEnvCfg):
-    viewer = VIEWER 
+    viewer = VIEWER
 
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
         self.scene.num_envs = 256
-        self.episode_length_s = 20.
+        self.episode_length_s = 20.0
         self.parkours.base_parkour.debug_vis = True
         self.commands.base_velocity.debug_vis = True
         self.scene.terrain.max_init_terrain_level = None
@@ -94,28 +95,30 @@ class UnitreeGo2TeacherParkourEnvCfg_EVAL(UnitreeGo2TeacherParkourEnvCfg):
             self.scene.terrain.terrain_generator.num_rows = 5
             self.scene.terrain.terrain_generator.num_cols = 5
             self.scene.terrain.terrain_generator.random_difficulty = True
-            self.scene.terrain.terrain_generator.difficulty_range = (0.0,1.0)
+            self.scene.terrain.terrain_generator.difficulty_range = (0.0, 1.0)
         self.events.randomize_rigid_body_com = None
         self.events.randomize_rigid_body_mass = None
-        self.events.push_by_setting_velocity.interval_range_s = (6.,6.)
-        self.commands.base_velocity.resampling_time_range = (60.,60.)
+        self.events.push_by_setting_velocity.interval_range_s = (6.0, 6.0)
+        self.commands.base_velocity.resampling_time_range = (60.0, 60.0)
         # 학습(trapezoid_train)과 같은 3종을 균등하게 평가한다.
         # 여기가 "eval_core"(원조 4종)였는데, 지금 teacher 는 그 4종을 한 번도
         # 본 적이 없으므로 학습 안 한 지형 위에서 평가하는 꼴이었다.
         # 원조 4종 체크포인트를 평가할 때는 "eval_core" 로 되돌릴 것.
         apply_terrain_preset(
-            self.scene.terrain.terrain_generator, "trapezoid_train_all",
+            self.scene.terrain.terrain_generator,
+            "trapezoid_train_all",
             active_overrides={"noise_range": (0.02, 0.02)},
         )
 
+
 @configclass
 class UnitreeGo2TeacherParkourEnvCfg_PLAY(UnitreeGo2TeacherParkourEnvCfg_EVAL):
-    viewer = VIEWER 
+    viewer = VIEWER
 
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
-        self.episode_length_s = 60.
+        self.episode_length_s = 60.0
         self.scene.num_envs = 16
         self.parkours.base_parkour.debug_vis = True
         self.commands.base_velocity.debug_vis = True
@@ -133,9 +136,8 @@ class UnitreeGo2TeacherParkourEnvCfg_PLAY(UnitreeGo2TeacherParkourEnvCfg_EVAL):
         # num_cols=5 는 여기서 덮어써진다.
         # 사다리꼴 2종만 보고 싶으면 "trapezoid_only" 로 바꾸면 된다.
         apply_terrain_preset(
-            self.scene.terrain.terrain_generator, "trapezoid_train_all",
+            self.scene.terrain.terrain_generator,
+            "trapezoid_train_all",
             one_col_per_terrain=True,
             active_overrides={"noise_range": (0.02, 0.02)},
         )
-
-

@@ -14,11 +14,11 @@ play.py 의 ``--multicam`` 이 쓴다.
 
 from __future__ import annotations
 
-import numpy as np
 import os
-import torch
 
 import imageio.v2 as imageio
+import numpy as np
+import torch
 
 from scripts.rsl_rl.video_overlay import depth_to_panel, label_panel, scandots_to_panel
 
@@ -73,9 +73,7 @@ def resolve_terrain_names(env) -> list[str]:
     props = np.array([c.proportion for c in gen_cfg.sub_terrains.values()], dtype=float)
     props = props / props.sum()
     num_cols = gen_cfg.num_cols
-    col_names = [
-        keys[int(np.min(np.where(i / num_cols + 0.001 < np.cumsum(props))[0]))] for i in range(num_cols)
-    ]
+    col_names = [keys[int(np.min(np.where(i / num_cols + 0.001 < np.cumsum(props))[0]))] for i in range(num_cols)]
     return [col_names[t] for t in types]
 
 
@@ -161,11 +159,11 @@ class PerEnvVideoRecorder:
 
         Args:
             depth: (num_envs, ...) 모양의 depth 텐서/배열. 주면 각 프레임 오른쪽에
-                depth 패널을 붙인다 (play.py --with_depth). None 이면 안 붙인다.
+                depth 패널을 붙인다 (play.py --panels). None 이면 안 붙인다.
             scandots: (num_envs, num_scan) 모양의 height scan — 주면 그 오른쪽에
-                탑뷰 격자 패널을 붙인다 (play.py --with_scandots). 여러 개를 나란히
+                탑뷰 격자 패널을 붙인다 (play.py --panels). 여러 개를 나란히
                 비교하려면 [(라벨, 배열), ...] 리스트로 준다 (EM student 의
-                GT | Measured). 라벨은 패널 왼쪽 상단에 그려진다.
+                GT | Estimated). 라벨은 패널 왼쪽 상단에 그려진다.
 
         둘 다 주면 RGB | depth | scandots... 순으로 가로로 붙는다.
         """

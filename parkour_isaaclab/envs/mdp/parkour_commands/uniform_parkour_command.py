@@ -1,20 +1,20 @@
-
 from __future__ import annotations
 
-import torch
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-import omni.log
-
 import isaaclab.utils.math as math_utils
+import omni.log
+import torch
 from isaaclab.assets import Articulation
-from isaaclab.managers import CommandTerm 
+from isaaclab.managers import CommandTerm
 from isaaclab.markers import VisualizationMarkers
 
 if TYPE_CHECKING:
     from parkour_isaaclab.envs import ParkourManagerBasedEnv
+
     from .parkour_command_cfg import ParkourCommandCfg
+
 
 class UniformParkourCommand(CommandTerm):
     cfg: ParkourCommandCfg
@@ -40,7 +40,6 @@ class UniformParkourCommand(CommandTerm):
         """The desired base velocity command in the base frame. Shape is (num_envs, 3)."""
         return self.vel_command_b
 
-
     def _update_metrics(self):
         # time for which the command was executed
         max_command_time = self.cfg.resampling_time_range[1]
@@ -62,16 +61,17 @@ class UniformParkourCommand(CommandTerm):
         self.heading_target[env_ids] = r.uniform_(*self.cfg.ranges.heading)
         # update standing envs
         if self.cfg.small_commands_to_zero:
-            self.vel_command_b[env_ids, :2] *= torch.abs(self.vel_command_b[env_ids, 0:1]) \
-                                            > self.cfg.clips.lin_vel_clip
-            
+            self.vel_command_b[env_ids, :2] *= torch.abs(self.vel_command_b[env_ids, 0:1]) > self.cfg.clips.lin_vel_clip
+
     def _update_command(self):
-        heading_error = math_utils.wrap_to_pi(self.heading_target  - \
-                                            self.robot.data.heading_w) * self.cfg.heading_control_stiffness
-        self.vel_command_b[:, 2] = torch.clip(heading_error,
-                    min= -1,
-                    max= 1,
-                    )
+        heading_error = (
+            math_utils.wrap_to_pi(self.heading_target - self.robot.data.heading_w) * self.cfg.heading_control_stiffness
+        )
+        self.vel_command_b[:, 2] = torch.clip(
+            heading_error,
+            min=-1,
+            max=1,
+        )
         self.vel_command_b[:, 2] *= torch.abs(self.vel_command_b[:, 2]) > self.cfg.clips.ang_vel_clip
 
     def _set_debug_vis_impl(self, debug_vis: bool):
@@ -118,4 +118,3 @@ class UniformParkourCommand(CommandTerm):
         arrow_quat = math_utils.quat_mul(base_quat_w, arrow_quat)
 
         return arrow_scale, arrow_quat
-

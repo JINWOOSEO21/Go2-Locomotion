@@ -8,12 +8,12 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import statistics
+from collections import deque
 
+import numpy as np
 from isaaclab.app import AppLauncher
 from tqdm import tqdm
-from collections import deque
-import numpy as np 
-import statistics
 
 # local imports
 import cli_args  # isort: skip
@@ -48,36 +48,33 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
-import gymnasium as gym
 import os
 import time
+
+import gymnasium as gym
+import isaaclab_tasks  # noqa: F401
 import torch
-
-from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
-
 from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
-from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
-
-from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
-from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
-
-import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import parse_env_cfg
 
+from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
+from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
+from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
+from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
 
 
 def main():
     """Play with RSL-RL agent."""
     # parse configuration
-    if args_cli.task.find('Eval') == -1:
-        print(f"[INFO] task argument must have 'Eval'")
-        return 
+    if args_cli.task.find("Eval") == -1:
+        print("[INFO] task argument must have 'Eval'")
+        return
     if args_cli.num_envs != 256:
         args_cli.num_envs = 256
-    
+
     env_cfg = parse_env_cfg(
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
@@ -169,7 +166,7 @@ def main():
             with torch.inference_mode():
                 # agent stepping
                 # obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = estimator.inference(obs[:, :num_prop])
-                actions = policy(obs, hist_encoding = True)
+                actions = policy(obs, hist_encoding=True)
             # env stepping
         elif is_em:
             # EM student: obs 의 scan 구간을 em_scan(10Hz 갱신)으로 교체해
@@ -177,15 +174,16 @@ def main():
             em_scan = extras["observations"]["em_scan"].to(env.device)
             with torch.inference_mode():
                 obs_em = obs.clone()
-                obs_em[:, num_prop:num_prop + num_scan] = em_scan
+                obs_em[:, num_prop : num_prop + num_scan] = em_scan
                 # 학습(learn_em)·배포와 동일: priv_explicit 은 estimator 추정값
-                obs_em[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = \
-                    estimator.inference(obs_em[:, :num_prop])
+                obs_em[:, num_prop + num_scan : num_prop + num_scan + num_priv_explicit] = estimator.inference(
+                    obs_em[:, :num_prop]
+                )
                 actions = policy(obs_em, hist_encoding=True)
         else:
-            depth_camera = extras["observations"]['depth_camera'].to(env.device)
+            depth_camera = extras["observations"]["depth_camera"].to(env.device)
             with torch.inference_mode():
-                if env.unwrapped.common_step_counter %5 == 0:
+                if env.unwrapped.common_step_counter % 5 == 0:
                     obs_student = obs[:, :num_prop].clone()
                     obs_student[:, 6:8] = 0
                     depth_encoder_out = depth_encoder(depth_camera, obs_student)
@@ -195,7 +193,7 @@ def main():
                     depth_latent = depth_encoder_out[:, :32]
                     yaw = depth_encoder_out[:, 32:] if depth_encoder_out.shape[1] > 32 else None
                 if yaw is not None:
-                    obs[:, 6:8] = 1.5*yaw
+                    obs[:, 6:8] = 1.5 * yaw
                 # obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = estimator.inference(obs[:, :num_prop])
                 actions = policy(obs, hist_encoding=True, scandots_latent=depth_latent)
         cur_goal_idx = base_parkour.cur_goal_idx.clone()
@@ -205,12 +203,12 @@ def main():
             # Exit the play loop after recording one video
             if timestep == args_cli.video_length:
                 break
-        
+
         edge_violation_buffer.extend(reward_feet_edge.feet_at_edge.sum(dim=1).float().cpu().numpy().tolist())
         cur_reward_sum += rews
         cur_episode_length += 1
         cur_time_from_start += 1
-        
+
         new_ids = (dones > 0).nonzero(as_tuple=False)
         rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
         lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
@@ -230,8 +228,8 @@ def main():
     len_mean = statistics.mean(lenbuffer)
     len_std = statistics.stdev(lenbuffer)
 
-    num_waypoints_mean = np.mean(np.array(num_waypoints_buffer).astype(float)/7.0)
-    num_waypoints_std = np.std(np.array(num_waypoints_buffer).astype(float)/7.0)
+    num_waypoints_mean = np.mean(np.array(num_waypoints_buffer).astype(float) / 7.0)
+    num_waypoints_std = np.std(np.array(num_waypoints_buffer).astype(float) / 7.0)
 
     edge_violation_mean = np.mean(edge_violation_buffer)
     edge_violation_std = np.std(edge_violation_buffer)
@@ -240,6 +238,7 @@ def main():
     print("Mean episode length: {:.2f}$\pm${:.2f}".format(len_mean, len_std))
     print("Mean number of waypoints: {:.2f}$\pm${:.2f}".format(num_waypoints_mean, num_waypoints_std))
     print("Mean edge violation: {:.2f}$\pm${:.2f}".format(edge_violation_mean, edge_violation_std))
+
 
 if __name__ == "__main__":
     # run the main function

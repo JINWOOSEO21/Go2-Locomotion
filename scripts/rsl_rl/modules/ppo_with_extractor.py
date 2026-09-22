@@ -1,12 +1,12 @@
-
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from rsl_rl.algorithms import PPO
 
 from .actor_critic_with_encoder import ActorCriticRMA
-from rsl_rl.algorithms import PPO
+
 
 class PPOWithExtractor(PPO):
     policy: ActorCriticRMA
@@ -35,11 +35,11 @@ class PPOWithExtractor(PPO):
         # Symmetry parameters
         symmetry_cfg: dict | None = None,
         # Distributed training parameters
-        priv_reg_coef_schedual = [0, 0, 0],
+        priv_reg_coef_schedual=[0, 0, 0],
         multi_gpu_cfg: dict | None = None,
     ):
         super().__init__(
-            policy, 
+            policy,
             num_learning_epochs,
             num_mini_batches,
             clip_param,
@@ -60,7 +60,7 @@ class PPOWithExtractor(PPO):
             symmetry_cfg,
             # Distributed training parameters
             multi_gpu_cfg,
-            )
+        )
 
         self.estimator: nn.Module = estimator
         print(f"estimator MLP: {estimator}")
@@ -74,15 +74,16 @@ class PPOWithExtractor(PPO):
         self.priv_reg_coef_schedual = priv_reg_coef_schedual
         self.counter = 0
 
-
     def act(self, obs, critic_obs, hist_encoding=False):
         if self.policy.is_recurrent:
             self.transition.hidden_states = self.policy.get_hidden_states()
         # compute the actions and values
         if self.train_with_estimated_states:
             obs_est = obs.clone()
-            priv_states_estimated = self.estimator(obs_est[:, :self.num_prop])
-            obs_est[:, self.num_prop+self.num_scan:self.num_prop+self.num_scan+self.priv_states_dim] = priv_states_estimated
+            priv_states_estimated = self.estimator(obs_est[:, : self.num_prop])
+            obs_est[:, self.num_prop + self.num_scan : self.num_prop + self.num_scan + self.priv_states_dim] = (
+                priv_states_estimated
+            )
             self.transition.actions = self.policy.act(obs_est, hist_encoding).detach()
         else:
             self.transition.actions = self.policy.act(obs, hist_encoding).detach()
@@ -96,7 +97,6 @@ class PPOWithExtractor(PPO):
         self.transition.privileged_observations = critic_obs
 
         return self.transition.actions
-    
 
     def update(self):  # noqa: C901
         mean_value_loss = 0
@@ -136,7 +136,6 @@ class PPOWithExtractor(PPO):
             masks_batch,
             rnd_state_batch,
         ) in generator:
-
             # number of augmentations per sample
             # we start with 1 and increase it if we use symmetry augmentation
             num_aug = 1
@@ -184,12 +183,26 @@ class PPOWithExtractor(PPO):
             with torch.inference_mode():
                 hist_latent_batch = self.policy.actor.infer_hist_latent(obs_batch)
             priv_reg_loss = (priv_latent_batch - hist_latent_batch.detach()).norm(p=2, dim=1).mean()
-            priv_reg_stage = min(max((self.counter - self.priv_reg_coef_schedual[2]), 0) / self.priv_reg_coef_schedual[3], 1)
-            priv_reg_coef = priv_reg_stage * (self.priv_reg_coef_schedual[1] - self.priv_reg_coef_schedual[0]) + self.priv_reg_coef_schedual[0]
+            priv_reg_stage = min(
+                max((self.counter - self.priv_reg_coef_schedual[2]), 0) / self.priv_reg_coef_schedual[3], 1
+            )
+            priv_reg_coef = (
+                priv_reg_stage * (self.priv_reg_coef_schedual[1] - self.priv_reg_coef_schedual[0])
+                + self.priv_reg_coef_schedual[0]
+            )
 
             # Estimator
-            priv_states_predicted = self.estimator(obs_batch[:, :self.num_prop])  # obs in batch is with true priv_states
-            estimator_loss = (priv_states_predicted - obs_batch[:, self.num_prop+self.num_scan:self.num_prop+self.num_scan+self.priv_states_dim]).pow(2).mean()
+            priv_states_predicted = self.estimator(
+                obs_batch[:, : self.num_prop]
+            )  # obs in batch is with true priv_states
+            estimator_loss = (
+                (
+                    priv_states_predicted
+                    - obs_batch[:, self.num_prop + self.num_scan : self.num_prop + self.num_scan + self.priv_states_dim]
+                )
+                .pow(2)
+                .mean()
+            )
             self.estimator_optimizer.zero_grad()
             estimator_loss.backward()
             nn.utils.clip_grad_norm_(self.estimator.parameters(), self.max_grad_norm)
@@ -251,10 +264,12 @@ class PPOWithExtractor(PPO):
             else:
                 value_loss = (returns_batch - value_batch).pow(2).mean()
 
-            loss = surrogate_loss + \
-                self.value_loss_coef * value_loss -\
-                self.entropy_coef * entropy_batch.mean() + \
-                priv_reg_coef * priv_reg_loss
+            loss = (
+                surrogate_loss
+                + self.value_loss_coef * value_loss
+                - self.entropy_coef * entropy_batch.mean()
+                + priv_reg_coef * priv_reg_loss
+            )
 
             # Symmetry loss
             if self.symmetry:
@@ -299,7 +314,6 @@ class PPOWithExtractor(PPO):
                 # compute the loss as the mean squared error
                 mseloss = torch.nn.MSELoss()
                 rnd_loss = mseloss(predicted_embedding, target_embedding)
-
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -349,8 +363,8 @@ class PPOWithExtractor(PPO):
             "surrogate": mean_surrogate_loss,
             "priv_reg": mean_priv_reg_loss,
             "entropy": mean_entropy,
-            'estimator':mean_estimator_loss,
-            'priv_reg_coef': priv_reg_coef
+            "estimator": mean_estimator_loss,
+            "priv_reg_coef": priv_reg_coef,
         }
         if self.rnd:
             loss_dict["rnd"] = mean_rnd_loss
@@ -382,10 +396,7 @@ class PPOWithExtractor(PPO):
             rnd_state_batch,
         ) in generator:
             with torch.inference_mode():
-                self.policy.act(obs_batch, 
-                                hist_encoding=True, 
-                                masks=masks_batch, 
-                                hidden_states=hid_states_batch[0])
+                self.policy.act(obs_batch, hist_encoding=True, masks=masks_batch, hidden_states=hid_states_batch[0])
 
             # Adaptation module update
             with torch.inference_mode():

@@ -66,7 +66,13 @@ from rsl_rl.utils import resolve_nn_activation  # noqa: E402
 def infer_arch(actor_sd: dict, est_sd: dict) -> dict:
     def linear_out_dims(sd, prefix):
         """nn.Sequential 안의 Linear 출력 폭을 인덱스 순서대로 모은다."""
-        idxs = sorted({int(k.split(".")[len(prefix.split(".")) - 1]) for k in sd if k.startswith(prefix) and k.endswith(".weight")})
+        idxs = sorted(
+            {
+                int(k.split(".")[len(prefix.split(".")) - 1])
+                for k in sd
+                if k.startswith(prefix) and k.endswith(".weight")
+            }
+        )
         return [sd[f"{prefix}{i}.weight"].shape[0] for i in idxs], idxs
 
     a = {}
@@ -75,7 +81,7 @@ def infer_arch(actor_sd: dict, est_sd: dict) -> dict:
     a["num_priv_latent"] = int(actor_sd["priv_encoder.0.weight"].shape[1])
 
     est_outs, _ = linear_out_dims(est_sd, "estimator.")
-    a["estimator_hidden_dims"] = est_outs[:-1]      # 마지막 층은 출력이라 hidden 이 아니다
+    a["estimator_hidden_dims"] = est_outs[:-1]  # 마지막 층은 출력이라 hidden 이 아니다
     a["num_priv_explicit"] = est_outs[-1]
 
     scan_outs, _ = linear_out_dims(actor_sd, "scan_encoder.")
@@ -131,9 +137,7 @@ class EMStudentPolicy(nn.Module):
 
     def forward(self, prop: torch.Tensor, scan: torch.Tensor, hist: torch.Tensor) -> torch.Tensor:
         priv_explicit = self.estimator(prop)
-        priv_latent = torch.zeros(
-            prop.shape[0], self.num_priv_latent, dtype=prop.dtype, device=prop.device
-        )
+        priv_latent = torch.zeros(prop.shape[0], self.num_priv_latent, dtype=prop.dtype, device=prop.device)
         obs = torch.cat([prop, scan, priv_explicit, priv_latent, hist], dim=1)
         return self.actor(obs, hist_encoding=True, scandots_latent=None)
 
@@ -244,12 +248,19 @@ def main():
     # 배치 1 고정으로 뽑는다. unitree_rl_lab 의 OrtRunner 는 모델에서 정적 shape 를
     # 읽어 버퍼 크기를 계산하므로, 동적 축(-1)을 남기면 엉뚱한 크기를 잡는다
     # (deploy/include/isaaclab/algorithms/algorithms.h:47-53).
-    dummy = (torch.zeros(1, arch["num_prop"]), torch.zeros(1, arch["num_scan"]),
-             torch.zeros(1, arch["num_hist"] * arch["num_prop"]))
+    dummy = (
+        torch.zeros(1, arch["num_prop"]),
+        torch.zeros(1, arch["num_scan"]),
+        torch.zeros(1, arch["num_hist"] * arch["num_prop"]),
+    )
     torch.onnx.export(
-        policy, dummy, onnx_path,
-        export_params=True, opset_version=args.opset,
-        input_names=["prop", "scan", "hist"], output_names=["actions"],
+        policy,
+        dummy,
+        onnx_path,
+        export_params=True,
+        opset_version=args.opset,
+        input_names=["prop", "scan", "hist"],
+        output_names=["actions"],
         dynamic_axes={},
     )
     print(f"\nONNX 저장: {onnx_path}")
@@ -257,9 +268,13 @@ def main():
     # 배포 쪽(env_sim2real, torch 없음)이 대조할 수 있게 torch 기준값을 함께 남긴다.
     ref_path = os.path.join(out_dir, "onnx_reference.npz")
     import numpy as np
+
     np.savez(
         ref_path,
-        prop=prop.numpy(), scan=scan.numpy(), hist=hist.numpy(), actions=ref_out.numpy(),
+        prop=prop.numpy(),
+        scan=scan.numpy(),
+        hist=hist.numpy(),
+        actions=ref_out.numpy(),
     )
     print(f"torch 기준값 저장: {ref_path}  (배치 {prop.shape[0]}개)")
 
@@ -269,12 +284,11 @@ def main():
         "activation": args.activation,
         "tanh_encoder_output": bool(args.tanh_encoder_output),
         "opset": args.opset,
-        "inputs": {"prop": arch["num_prop"], "scan": arch["num_scan"],
-                   "hist": arch["num_hist"] * arch["num_prop"]},
+        "inputs": {"prop": arch["num_prop"], "scan": arch["num_scan"], "hist": arch["num_hist"] * arch["num_prop"]},
         "outputs": {"actions": arch["num_actions"]},
         "arch": arch,
         "note": "hist 는 과거 prop 프레임 num_hist 개를 [t-9 ... t] 순서로 이어붙인 것. "
-                "prop 인덱스 6:8(delta_yaw)은 history 에 넣기 전에 0 으로 만든다.",
+        "prop 인덱스 6:8(delta_yaw)은 history 에 넣기 전에 0 으로 만든다.",
     }
     meta_path = os.path.join(out_dir, "policy_meta.json")
     with open(meta_path, "w") as f:

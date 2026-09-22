@@ -6,8 +6,8 @@
 """Installation script for the 'isaaclab_tasks' python package."""
 
 import os
-import toml
 
+import toml
 from setuptools import setup
 
 # Obtain the extension data from the extension.toml file
@@ -33,5 +33,5 @@ setup(
         "Isaac Sim :: 4.5.0",
     ],
     zip_safe=False,
-    install_requires=['fast_simplification']
+    install_requires=["fast_simplification"],
 )

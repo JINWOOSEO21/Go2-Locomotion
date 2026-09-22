@@ -125,6 +125,33 @@ python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go
 python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Eval-v0
 ```
 
+### Playback recording and input panels
+
+In `play.py`, `--video` records one viewport video under `videos/play/`.
+The viewer configuration starts at environment 0; there is currently no CLI
+argument for choosing a different viewport environment. In the GUI, Numpad 7/9
+switch the tracked environment. Headless recording has no keyboard camera control.
+
+`--multicam` records one video per environment under `videos/multicam/` (or
+`--out_dir`). Passing both `--video --multicam` saves both sets of videos.
+
+Add `--panels` to `--multicam` to display the policy's terrain input automatically:
+
+| Policy input | Panels beside the RGB video |
+| --- | --- |
+| Depth camera | Depth input used by the depth encoder |
+| Ground-truth scandots | GT scandots |
+| LiDAR-derived elevation map | GT scandots and Estimated scandots, side by side |
+
+The elevation-map comparison uses the scan samples actually passed to the policy.
+Depth panels retain the last encoder input between encoder updates. `--panels`
+does not take a depth/scandots argument and requires `--multicam`; it does not add
+panels to the viewport video or attach an extra depth camera to a GT-scan policy.
+
+```bash
+python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Play-v0 --headless --multicam --panels --num_envs 2 --video_length 1000
+```
+
 ## IsaacLab demos
 
 ```bash

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from isaaclab.envs.ui.base_env_window import BaseEnvWindow
 import omni.kit.app
+from isaaclab.envs.ui.base_env_window import BaseEnvWindow
+
 if TYPE_CHECKING:
     from parkour_isaaclab.envs.parkour_manager_based_env import ParkourManagerBasedEnv
+
 
 class ParkourManagerBasedRLEnvWindow(BaseEnvWindow):
     """Window manager for the RL environment.
@@ -33,4 +35,3 @@ class ParkourManagerBasedRLEnvWindow(BaseEnvWindow):
                     self._visualize_manager(title="Curriculum", class_name="curriculum_manager")
                     self._visualize_manager(title="Termination", class_name="termination_manager")
                     self._visualize_manager(title="Parkour", class_name="parkour_manager")
-

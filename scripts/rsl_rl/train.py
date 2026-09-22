@@ -6,8 +6,8 @@
 """Script to train RL agent with RSL-RL."""
 
 """Launch Isaac Sim Simulator first."""
-import os 
 import argparse
+import os
 import sys
 
 from isaaclab.app import AppLauncher
@@ -69,14 +69,11 @@ if args_cli.distributed and version.parse(installed_version) < version.parse(RSL
 
 """Rest everything follows."""
 
-import gymnasium as gym
-import os
 import pickle
-import torch
 from datetime import datetime
 
-from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
-
+import gymnasium as gym
+import torch
 from isaaclab.envs import (
     DirectMARLEnv,
     DirectMARLEnvCfg,
@@ -86,15 +83,16 @@ from isaaclab.envs import (
 )
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_yaml
-from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
-from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
-from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
+from isaaclab_tasks.utils.hydra import hydra_task_config
+
 # import isaaclab_tasks  # noqa: F401
 import parkour_tasks  # noqa: F401
-from isaaclab_tasks.utils.hydra import hydra_task_config
-from parkour_isaaclab.envs import (
-ParkourManagerBasedRLEnv
-)
+from parkour_isaaclab.envs import ParkourManagerBasedRLEnv
+from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
+from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
+from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
+from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
+
 # PLACEHOLDER: Extension template (do not remove this comment)
 
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -104,9 +102,11 @@ torch.backends.cudnn.benchmark = False
 
 
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
-def main(env_cfg: ParkourManagerBasedRLEnv |ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: ParkourRslRlOnPolicyRunnerCfg):
+def main(
+    env_cfg: ParkourManagerBasedRLEnv | ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg,
+    agent_cfg: ParkourRslRlOnPolicyRunnerCfg,
+):
     """Train with RSL-RL agent."""
-    
 
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
@@ -163,7 +163,7 @@ def main(env_cfg: ParkourManagerBasedRLEnv |ManagerBasedRLEnvCfg | DirectRLEnvCf
     # # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
-    
+
     # save resume path before creating a new log_dir
     # (EMDistillation 은 elevation-map student — teacher 출발점 규약을 그대로 따른다)
     _distill_classes = ("DistillationWithExtractor", "EMDistillation")

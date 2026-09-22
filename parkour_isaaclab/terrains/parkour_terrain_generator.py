@@ -1,17 +1,18 @@
 import numpy as np
-import trimesh
-
 import omni.log
-from isaaclab.terrains.trimesh.utils import make_border
+import trimesh
 from isaaclab.terrains.terrain_generator import TerrainGenerator
-from .parkour_terrain_generator_cfg import ParkourTerrainGeneratorCfg, ParkourSubTerrainBaseCfg
+from isaaclab.terrains.trimesh.utils import make_border
+
+from .parkour_terrain_generator_cfg import ParkourSubTerrainBaseCfg, ParkourTerrainGeneratorCfg
+
 
 class ParkourTerrainGenerator(TerrainGenerator):
     def __init__(self, cfg: ParkourTerrainGeneratorCfg, device: str = "cpu"):
-        self.num_goals = cfg.num_goals 
+        self.num_goals = cfg.num_goals
         self.terrain_type = np.zeros((cfg.num_rows, cfg.num_cols))
         self.goals = np.zeros((cfg.num_rows, cfg.num_cols, self.num_goals, 3))
-        self.terrain_names = np.zeros((cfg.num_rows, cfg.num_cols, 1)).astype(str) 
+        self.terrain_names = np.zeros((cfg.num_rows, cfg.num_cols, 1)).astype(str)
         width_pixels = int(cfg.size[0] / cfg.horizontal_scale) + 1
         length_pixels = int(cfg.size[1] / cfg.horizontal_scale) + 1
         self.total_width_pixels = width_pixels * cfg.num_rows
@@ -20,7 +21,7 @@ class ParkourTerrainGenerator(TerrainGenerator):
         self.x_edge_maskes = np.zeros((cfg.num_rows, cfg.num_cols, width_pixels, length_pixels), dtype=np.int16)
 
         super().__init__(cfg=cfg, device=device)
-        self.cfg:ParkourTerrainGeneratorCfg
+        self.cfg: ParkourTerrainGeneratorCfg
 
     def _generate_random_terrains(self):
         """Add terrains based on randomly sampled difficulty parameter."""
@@ -42,12 +43,14 @@ class ParkourTerrainGenerator(TerrainGenerator):
             sub_terrains_name = sub_terrains_names[sub_index]
             self.terrain_type[sub_row, sub_col] = sub_col
             sub_terrains_cfg = sub_terrains_cfgs[sub_index]
-            mesh, origin, sub_terrain_goal, goal_heights, x_edge_mask = self._get_terrain_mesh(difficulty, sub_terrains_cfg)
+            mesh, origin, sub_terrain_goal, goal_heights, x_edge_mask = self._get_terrain_mesh(
+                difficulty, sub_terrains_cfg
+            )
             # add to sub-terrains
             self.terrain_names[sub_row, sub_col] = sub_terrains_name
             self._add_sub_terrain(mesh, origin, sub_row, sub_col, sub_terrain_goal)
             self.goal_heights[sub_row, sub_col, :] = goal_heights
-            self.x_edge_maskes[sub_row, sub_col,: ,:] = x_edge_mask 
+            self.x_edge_maskes[sub_row, sub_col, :, :] = x_edge_mask
 
     def _generate_curriculum_terrains(self):
         """Add terrains based on the difficulty parameter."""
@@ -70,27 +73,29 @@ class ParkourTerrainGenerator(TerrainGenerator):
                 if self.cfg.random_difficulty:
                     difficulty = (sub_row + self.np_rng.uniform()) / self.cfg.num_rows
                 else:
-                    difficulty = sub_row / (self.cfg.num_rows-1)
+                    difficulty = sub_row / (self.cfg.num_rows - 1)
 
                 difficulty = lower + (upper - lower) * difficulty
                 # generate terrain
                 sub_terrains_cfg = sub_terrains_cfgs[sub_indices[sub_col]]
                 sub_terrains_name = sub_terrains_names[sub_indices[sub_col]]
-                mesh, origin, sub_terrain_goal, goal_heights, x_edge_mask = self._get_terrain_mesh(difficulty, sub_terrains_cfg)
+                mesh, origin, sub_terrain_goal, goal_heights, x_edge_mask = self._get_terrain_mesh(
+                    difficulty, sub_terrains_cfg
+                )
                 # add to sub-terrains
                 self.terrain_type[sub_row, sub_col] = sub_indices[sub_col]
                 self.terrain_names[sub_row, sub_col] = sub_terrains_name
                 self._add_sub_terrain(mesh, origin, sub_row, sub_col, sub_terrain_goal)
                 self.goal_heights[sub_row, sub_col, :] = goal_heights
-                self.x_edge_maskes[sub_row, sub_col,: ,:] = x_edge_mask
+                self.x_edge_maskes[sub_row, sub_col, :, :] = x_edge_mask
 
     def _get_terrain_mesh(
-        self, 
-        difficulty: float, 
+        self,
+        difficulty: float,
         cfg: ParkourSubTerrainBaseCfg,
-        ) -> tuple[trimesh.Trimesh, np.ndarray, np.ndarray]:
+    ) -> tuple[trimesh.Trimesh, np.ndarray, np.ndarray]:
         # copy the configuration
-        cfg:ParkourSubTerrainBaseCfg = cfg.copy()
+        cfg: ParkourSubTerrainBaseCfg = cfg.copy()
         # add other parameters to the sub-terrain configuration
         cfg.difficulty = float(difficulty)
         cfg.seed = self.cfg.seed
@@ -108,7 +113,7 @@ class ParkourTerrainGenerator(TerrainGenerator):
         # if caching is enabled, save the mesh and origin
 
         return mesh, origin, goals, goal_heights, x_edge_mask
-    
+
     def _add_terrain_border(self):
         """Add a surrounding border over all the sub-terrains into the terrain meshes."""
         # border parameters
@@ -132,12 +137,12 @@ class ParkourTerrainGenerator(TerrainGenerator):
         self.terrain_meshes.append(border)
 
     def _add_sub_terrain(
-        self, 
-        mesh: trimesh.Trimesh, 
-        origin: np.ndarray, 
-        row: int, 
-        col: int, 
-        sub_terrain_goal: np.ndarray, 
+        self,
+        mesh: trimesh.Trimesh,
+        origin: np.ndarray,
+        row: int,
+        col: int,
+        sub_terrain_goal: np.ndarray,
     ):
         # transform the mesh to the correct position
         transform = np.eye(4)
@@ -147,4 +152,4 @@ class ParkourTerrainGenerator(TerrainGenerator):
         self.terrain_meshes.append(mesh)
         # add origin to the list
         self.terrain_origins[row, col] = origin + transform[:3, -1]
-        self.goals[row, col, :, :2] = sub_terrain_goal 
+        self.goals[row, col, :, :2] = sub_terrain_goal

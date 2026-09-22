@@ -1,52 +1,60 @@
 from isaaclab.utils import configclass
+
 from ..parkour_terrain_generator_cfg import ParkourSubTerrainBaseCfg
 from . import extreme_parkour_terrians
 
+
 @configclass
 class ExtremeParkourRoughTerrainCfg(ParkourSubTerrainBaseCfg):
-    apply_roughness: bool = True 
-    apply_flat: bool = False 
+    apply_roughness: bool = True
+    apply_flat: bool = False
     downsampled_scale: float | None = 0.075
-    noise_range: tuple[float,float] = (0.02, 0.06)
+    noise_range: tuple[float, float] = (0.02, 0.06)
     noise_step: float = 0.005
     x_range: tuple[float, float] = (0.8, 1.5)
     y_range: tuple[float, float] = (-0.4, 0.4)
     half_valid_width: tuple[float, float] = (0.6, 1.2)
-    pad_width: float = 0.1 
+    pad_width: float = 0.1
     pad_height: float = 0.0
+
 
 @configclass
 class ExtremeParkourGapTerrainCfg(ExtremeParkourRoughTerrainCfg):
     function = extreme_parkour_terrians.parkour_gap_terrain
-    gap_size: str = '0.1 + 0.7*difficulty'
-    gap_depth: tuple[float, float] = (0.2, 1) 
+    gap_size: str = "0.1 + 0.7*difficulty"
+    gap_depth: tuple[float, float] = (0.2, 1)
+
 
 @configclass
 class ExtremeParkourHurdleTerrainCfg(ExtremeParkourRoughTerrainCfg):
     function = extreme_parkour_terrians.parkour_hurdle_terrain
-    stone_len: str = '0.1 + 0.3 * difficulty'
-    hurdle_height_range: str = '0.1 + 0.1 * difficulty, 0.15 + 0.15 * difficulty'
+    stone_len: str = "0.1 + 0.3 * difficulty"
+    hurdle_height_range: str = "0.1 + 0.1 * difficulty, 0.15 + 0.15 * difficulty"
+
 
 @configclass
 class ExtremeParkourStepTerrainCfg(ExtremeParkourRoughTerrainCfg):
     function = extreme_parkour_terrians.parkour_step_terrain
-    step_height: str = '0.1 + 0.35*difficulty'
+    step_height: str = "0.1 + 0.35*difficulty"
+
 
 @configclass
 class ExtremeParkourTerrainCfg(ExtremeParkourRoughTerrainCfg):
     function = extreme_parkour_terrians.parkour_terrain
     pit_depth: tuple[float, float] = (0.2, 1)
     stone_width: float = 1.0
-    last_stone_len: float =1.6
-    x_range: str = '-0.1, 0.1+0.3*difficulty'
-    y_range: str = '0.2, 0.3+0.1*difficulty'
-    stone_len: str = '0.9 - 0.3*difficulty, 1 - 0.2*difficulty'
-    incline_height: str = '0.25*difficulty'
-    last_incline_height: str = 'incline_height + 0.1 - 0.1*difficulty'
+    last_stone_len: float = 1.6
+    x_range: str = "-0.1, 0.1+0.3*difficulty"
+    y_range: str = "0.2, 0.3+0.1*difficulty"
+    stone_len: str = "0.9 - 0.3*difficulty, 1 - 0.2*difficulty"
+    incline_height: str = "0.25*difficulty"
+    last_incline_height: str = "incline_height + 0.1 - 0.1*difficulty"
+
 
 @configclass
 class ExtremeParkourDemoTerrainCfg(ExtremeParkourRoughTerrainCfg):
     function = extreme_parkour_terrians.parkour_demo_terrain
+
 
 @configclass
 class ExtremeParkourPyramidStairsTerrainCfg(ExtremeParkourRoughTerrainCfg):
@@ -91,6 +99,7 @@ class ExtremeParkourPyramidStairsTerrainCfg(ExtremeParkourRoughTerrainCfg):
     run_up_len: float = 1.5
     """시작 플랫폼 끝 ~ 피라미드 시작까지의 평지 길이 (m). 마지막 goal 여유로도 쓰인다."""
 
+
 @configclass
 class ExtremeParkourInvertedPyramidStairsTerrainCfg(ExtremeParkourPyramidStairsTerrainCfg):
     """IsaacLab ``HfInvertedPyramidStairsTerrainCfg`` 에 대응.
@@ -99,6 +108,7 @@ class ExtremeParkourInvertedPyramidStairsTerrainCfg(ExtremeParkourPyramidStairsT
     """
 
     inverted: bool = True
+
 
 @configclass
 class ExtremeParkourDiscreteObstaclesTerrainCfg(ExtremeParkourRoughTerrainCfg):
@@ -131,6 +141,7 @@ class ExtremeParkourDiscreteObstaclesTerrainCfg(ExtremeParkourRoughTerrainCfg):
     바닥에 찍히면 로봇이 도달할 수 없어 태스크가 깨지므로 디딜 자리를 확보한다.
     """
 
+
 @configclass
 class ExtremeParkourRandomGridTerrainCfg(ExtremeParkourRoughTerrainCfg):
     """IsaacLab ``MeshRandomGridTerrainCfg`` 를 parkour 지형 규약에 맞춘 설정.
@@ -150,6 +161,7 @@ class ExtremeParkourRandomGridTerrainCfg(ExtremeParkourRoughTerrainCfg):
     """칸 높이 진폭의 (최소, 최대) (m). difficulty 로 보간한 값을 h 라 할 때
     각 칸의 윗면은 ``uniform(-h, +h)`` 다 (원본과 동일)."""
 
+
 @configclass
 class ExtremeParkourTrapezoidRampTerrainCfg(ExtremeParkourRoughTerrainCfg):
     """옆에서 보면 사다리꼴인 경사로 지형: 오르막 램프 - 평지 - 내리막 램프.
@@ -160,7 +172,7 @@ class ExtremeParkourTrapezoidRampTerrainCfg(ExtremeParkourRoughTerrainCfg):
 
     function = extreme_parkour_terrians.parkour_trapezoid_ramp_terrain
 
-    slope_angle: str = '10 + 27*difficulty'
+    slope_angle: str = "10 + 27*difficulty"
     """경사 각도 (도). 10행 커리큘럼(difficulty = row/9)에서 10, 13, ..., 37도가 된다."""
 
     course_width_range: tuple[float, float] = (2.0, 4.0)
@@ -179,6 +191,7 @@ class ExtremeParkourTrapezoidRampTerrainCfg(ExtremeParkourRoughTerrainCfg):
     end_margin: float = 1.5
     """내리막이 끝난 뒤 남겨둘 평지 길이 (m). 마지막 goal 이 이 안에 찍힌다."""
 
+
 @configclass
 class ExtremeParkourTrapezoidStairsTerrainCfg(ExtremeParkourRoughTerrainCfg):
     """사다리꼴 계단 지형: 계단 오르막 - 평지 - 계단 내리막.
@@ -190,7 +203,7 @@ class ExtremeParkourTrapezoidStairsTerrainCfg(ExtremeParkourRoughTerrainCfg):
 
     function = extreme_parkour_terrians.parkour_trapezoid_stairs_terrain
 
-    step_height: str = '0.05 + 0.18*difficulty'
+    step_height: str = "0.05 + 0.18*difficulty"
     """단차 높이 (m). 10행 커리큘럼(difficulty = row/9)에서 5, 7, ..., 23cm 가 된다."""
 
     num_steps_range: tuple[int, int] = (3, 7)
@@ -211,4 +224,3 @@ class ExtremeParkourTrapezoidStairsTerrainCfg(ExtremeParkourRoughTerrainCfg):
 
     end_margin: float = 1.5
     """내리막이 끝난 뒤 남겨둘 평지 길이 (m)."""
-

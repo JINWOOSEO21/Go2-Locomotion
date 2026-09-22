@@ -23,10 +23,18 @@ import mujoco
 # unitree_rl_lab source/unitree_rl_lab/unitree_rl_lab/assets/robots/unitree.py 의
 # UNITREE_GO2_CFG.joint_sdk_names. LowCmd.motor_cmd / LowState.motor_state 인덱스 규약.
 SDK_JOINT_NAMES = [
-    "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
-    "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
-    "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
-    "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
+    "FR_hip_joint",
+    "FR_thigh_joint",
+    "FR_calf_joint",
+    "FL_hip_joint",
+    "FL_thigh_joint",
+    "FL_calf_joint",
+    "RR_hip_joint",
+    "RR_thigh_joint",
+    "RR_calf_joint",
+    "RL_hip_joint",
+    "RL_thigh_joint",
+    "RL_calf_joint",
 ]
 
 
@@ -44,11 +52,7 @@ def main():
 
     m = mujoco.MjModel.from_xml_path(args.mjcf)
     name = lambda obj, i: mujoco.mj_id2name(m, obj, i)  # noqa: E731
-    mj = [
-        name(mujoco.mjtObj.mjOBJ_JOINT, j)
-        for j in range(m.njnt)
-        if m.jnt_type[j] == mujoco.mjtJoint.mjJNT_HINGE
-    ]
+    mj = [name(mujoco.mjtObj.mjOBJ_JOINT, j) for j in range(m.njnt) if m.jnt_type[j] == mujoco.mjtJoint.mjJNT_HINGE]
     mj_act = [name(mujoco.mjtObj.mjOBJ_JOINT, m.actuator_trnid[a, 0]) for a in range(m.nu)]
     # 이게 깨지면 qpos 인덱스와 ctrl 인덱스를 따로 관리해야 한다.
     assert mj == mj_act, f"MJCF 힌지 순서 != actuator 순서\n  hinge={mj}\n  act={mj_act}"
@@ -79,9 +83,7 @@ def main():
         "default_joint_pos_mj": [round(q[mj_to_il[i]], 6) for i in range(12)],
         "default_joint_pos_sdk": [round(q[sdk_to_il[i]], 6) for i in range(12)],
         # MJCF 의 기본 자세 키프레임은 IsaacLab 기본 자세와 다를 수 있다 (실제로 다르다).
-        "mj_key_home_qpos_joints": (
-            [round(float(v), 6) for v in m.key_qpos[0][7:]] if m.nkey else None
-        ),
+        "mj_key_home_qpos_joints": ([round(float(v), 6) for v in m.key_qpos[0][7:]] if m.nkey else None),
         "il_body_names": il_dump["body_names"],
         "mj_body_names": [name(mujoco.mjtObj.mjOBJ_BODY, b) for b in range(m.nbody)],
         "actuators": il_dump["actuators"],

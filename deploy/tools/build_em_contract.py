@@ -32,6 +32,7 @@ Head_upper / Head_lower(base 고정)와 {leg}_foot(calf 고정)은 관절과 무
 
 산출물은 contract/em_geometry.npz — 사이드카가 런타임에 읽는 유일한 기하 파일이다.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -103,8 +104,7 @@ def main() -> int:
         ic, ip_ = bi[child], bi[parent]
         th = q_test[:, ji[joint]]
         # 위치: 부모 프레임 기준 자식 원점 — 관절각과 무관해야 한다.
-        p_rel = np.einsum("kij,kj->ki", R_in_base[:, ip_].transpose(0, 2, 1),
-                          pos_b[:, ic] - pos_b[:, ip_])
+        p_rel = np.einsum("kij,kj->ki", R_in_base[:, ip_].transpose(0, 2, 1), pos_b[:, ic] - pos_b[:, ip_])
         p0 = p_rel.mean(0)
         p_spread = np.abs(p_rel - p0).max()
 
@@ -132,7 +132,7 @@ def main() -> int:
             f"  {parent:10s} -> {child:10s} ({joint:15s}) "
             f"axis=[{axis[0]:+.4f} {axis[1]:+.4f} {axis[2]:+.4f}] "
             f"p0=[{p0[0]:+.4f} {p0[1]:+.4f} {p0[2]:+.4f}] "
-            f"p흔들림={p_spread*1e3:.3f}mm R0흔들림={np.rad2deg(R0_spread):.4f}deg"
+            f"p흔들림={p_spread * 1e3:.3f}mm R0흔들림={np.rad2deg(R0_spread):.4f}deg"
         )
         return p0, R0, axis
 
@@ -141,38 +141,46 @@ def main() -> int:
     for leg in LEGS:
         chain[f"{leg}_hip"] = ("base", f"{leg}_hip_joint", *solve_link(f"{leg}_hip", "base", f"{leg}_hip_joint"))
         chain[f"{leg}_thigh"] = (
-            f"{leg}_hip", f"{leg}_thigh_joint",
+            f"{leg}_hip",
+            f"{leg}_thigh_joint",
             *solve_link(f"{leg}_thigh", f"{leg}_hip", f"{leg}_thigh_joint"),
         )
         chain[f"{leg}_calf"] = (
-            f"{leg}_thigh", f"{leg}_calf_joint",
+            f"{leg}_thigh",
+            f"{leg}_calf_joint",
             *solve_link(f"{leg}_calf", f"{leg}_thigh", f"{leg}_calf_joint"),
         )
     print("\n".join(report))
 
     print("\n[2] 고정 링크 (관절 없음)")
     fixed = {}
-    for child, parent in (("Head_upper", "base"), ("Head_lower", "base"),
-                          *[(f"{leg}_foot", f"{leg}_calf") for leg in LEGS]):
+    for child, parent in (
+        ("Head_upper", "base"),
+        ("Head_lower", "base"),
+        *[(f"{leg}_foot", f"{leg}_calf") for leg in LEGS],
+    ):
         ic, ip_ = bi[child], bi[parent]
-        p_rel = np.einsum("kij,kj->ki", R_in_base[:, ip_].transpose(0, 2, 1),
-                          pos_b[:, ic] - pos_b[:, ip_])
+        p_rel = np.einsum("kij,kj->ki", R_in_base[:, ip_].transpose(0, 2, 1), pos_b[:, ic] - pos_b[:, ip_])
         R_rel = np.einsum("kij,kjl->kil", R_in_base[:, ip_].transpose(0, 2, 1), R_in_base[:, ic])
         p0 = p_rel.mean(0)
         R0 = R_rel[0]
         spread = np.abs(p_rel - p0).max()
         r_spread = max(np.abs(log_so3(R0.T @ R_rel[k])).max() for k in range(K))
         fixed[child] = (parent, p0, R0)
-        print(f"  {parent:10s} -> {child:10s} p0=[{p0[0]:+.4f} {p0[1]:+.4f} {p0[2]:+.4f}] "
-              f"흔들림={spread*1e3:.3f}mm / {np.rad2deg(r_spread):.4f}deg")
+        print(
+            f"  {parent:10s} -> {child:10s} p0=[{p0[0]:+.4f} {p0[1]:+.4f} {p0[2]:+.4f}] "
+            f"흔들림={spread * 1e3:.3f}mm / {np.rad2deg(r_spread):.4f}deg"
+        )
 
     # --- 3. 게이트: 역산한 모델로 FK 를 돌려 덤프의 base 프레임 위치를 재현하는가 ---
     # 사이드카가 실제로 쓸 코드와 같은 순서로 계산한다.
     order: list[tuple[str, str, str | None]] = []  # (child, parent, joint|None)
     for leg in LEGS:
-        order += [(f"{leg}_hip", "base", f"{leg}_hip_joint"),
-                  (f"{leg}_thigh", f"{leg}_hip", f"{leg}_thigh_joint"),
-                  (f"{leg}_calf", f"{leg}_thigh", f"{leg}_calf_joint")]
+        order += [
+            (f"{leg}_hip", "base", f"{leg}_hip_joint"),
+            (f"{leg}_thigh", f"{leg}_hip", f"{leg}_thigh_joint"),
+            (f"{leg}_calf", f"{leg}_thigh", f"{leg}_calf_joint"),
+        ]
     order += [("Head_upper", "base", None), ("Head_lower", "base", None)]
     order += [(f"{leg}_foot", f"{leg}_calf", None) for leg in LEGS]
 
@@ -221,9 +229,9 @@ def main() -> int:
         P, _ = fk(q_test[k])
         err = np.linalg.norm(P - pos_b[k, [bi[n] for n in fk_names]], axis=1)
         worst = max(worst, err.max())
-        print(f"  자세 {k}: max {err.max()*1e3:8.4f} mm   mean {err.mean()*1e3:8.4f} mm")
+        print(f"  자세 {k}: max {err.max() * 1e3:8.4f} mm   mean {err.mean() * 1e3:8.4f} mm")
     ok = worst * 1e3 < a.tol_mm
-    print(f"\n  최대 오차 {worst*1e3:.4f} mm  (허용 {a.tol_mm} mm) → {'PASS' if ok else 'FAIL'}")
+    print(f"\n  최대 오차 {worst * 1e3:.4f} mm  (허용 {a.tol_mm} mm) → {'PASS' if ok else 'FAIL'}")
 
     np.savez(
         a.out,

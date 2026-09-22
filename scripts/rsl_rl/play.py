@@ -3,75 +3,24 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Script to play a checkpoint if an RL agent from RSL-RL.
+"""Play an RSL-RL checkpoint and optionally record videos.
 
-녹화 방식이 두 가지다. teacher / student 어느 태스크든 똑같이 쓸 수 있다.
+--video records a single viewport video in <load_run>/videos/play/.
+--multicam records one video per environment in <load_run>/videos/multicam/
+(or --out_dir). Both flags may be used together; output paths are unchanged.
 
-  --video     뷰포트 카메라 1대를 gym.wrappers.RecordVideo 로 녹화한다.
-              결과는 <load_run 폴더(예: student_pretrained)>/videos/play/ 아래 mp4 1개다.
-              (load_run 폴더가 없으면 체크포인트 옆 videos/play/ 에 둔다.)
+--panels requires --multicam and automatically shows the policy's terrain input:
+  depth policy: depth camera input used by the encoder;
+  GT-scan policy: GT scandots;
+  elevation-map policy: GT and Estimated scandots side by side.
 
-  --multicam  씬의 record_camera(TiledCamera, env 당 1대)를 직접 읽어
-              env 마다 mp4 를 하나씩 쓴다. env 와 지형의 대응이
-                  terrain_types = floor(arange(num_envs) / (num_envs/num_cols))
-              이므로 --num_envs 를 PLAY 설정의 num_cols(= 활성 지형 수)와 같게 주면
-              지형당 1마리가 되어 "지형별 영상"이 한 번에 나온다.
-                teacher PLAY : trapezoid_train_all + one_col_per_terrain -> 3종
-                               (flat / 사다리꼴 램프 / 사다리꼴 계단) 이므로 --num_envs 3
-                student PLAY : trapezoid_only + one_col_per_terrain -> 2종 이므로 --num_envs 2
-              파일 이름에 실제 지형 이름이 들어간다 (envN_<terrain>.mp4).
+The viewport starts with viewer.env_index=0; play has no CLI environment selector.
+In the GUI, Numpad 7/9 change the tracked environment.
 
-              teacher 씬은 학습이 6144 env 라 record_camera 를 상시로 둘 수 없어
-              None 으로 비워 두었고, 이 스크립트가 --multicam 일 때만 꽂아 넣는다.
-
-  --with_depth  --multicam 과 같이 쓴다. depth map 을 각 프레임 오른쪽에 붙인다.
-                student 는 정책이 실제로 먹는 관측이 그대로 그려진다.
-                teacher 는 depth 관측이 없으므로, student 와 같은 카메라/전처리를
-                녹화용으로만 씬에 꽂아 넣어 "같은 자리에서 보면 이렇게 보인다"를
-                보여 준다 (정책 입력에는 전혀 쓰이지 않는다).
-
-  --with_scandots  --multicam 과 같이 쓴다. teacher 가 실제로 먹는 height scan
-                (obs 의 num_scan=132 구간) 을 로봇 기준 탑뷰 격자로 그려 붙인다.
-                teacher 에게는 이게 "정책이 보는 지형" 그 자체다. --with_depth 의
-                teacher 패널이 정책과 무관한 참고 화면인 것과 대비된다.
-                student 는 이 구간을 depth latent 로 대체해 쓰지 않으므로,
-                student 에서 켜면 "teacher 라면 봤을 값" 을 보여 주는 셈이다.
-                --with_depth 와 같이 주면 RGB | depth | scandots 로 붙는다.
-
-  --em_error_plot  EM student 전용. 매 프레임 obs 의 GT scandots 와 정책이 실제로
-                먹은 elevation map 샘플의 |차이| 를 스캔 전 구간(num_scan 개)에서
-                cell당 평균해[m] env 별로 쌓고, 끝나면 env(지형)마다 선 그래프 PNG 1개와
-                전체 CSV 1개를 남긴다 (--multicam 이면 영상과 같은 폴더, 아니면
-                <load_run 폴더>/videos/em_error/). x 축 frame 은 multicam 영상과
-                1:1 이다. env 마다 첫 episode 가 끝나면 그 env 의 기록을 멈추므로
-                그래프 하나에는 episode 하나의 데이터만 들어간다. 종료 프레임은
-                빨간 세로 점선으로 표시한다.
-
-  --preset      PLAY cfg 의 지형 분포를 TERRAIN_PRESETS 의 다른 키로 바꾼다.
-                one_col_per_terrain 로 붙이므로 --num_envs 를 프리셋의 지형 수와
-                같게 주면 지형당 1마리가 된다.
-                  trapezoid_only      : 사다리꼴 램프 + 계단 2종
-                  trapezoid_train_all : 위 2종 + flat 3종 (teacher PLAY 기본값)
-
-사용 예:
-  # teacher, 지형 3종 영상 3개
-  python scripts/rsl_rl/play.py --headless --multicam \
-      --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0 \
-      --num_envs 3 --video_length 1000 --out_dir videos/teacher
-
-  # teacher, 램프/계단 2종만 + 정책 입력 scandots 패널, 10초(50fps x 500 step)
-  python scripts/rsl_rl/play.py --headless --multicam --with_scandots \
-      --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0 \
-      --preset trapezoid_only --num_envs 2 --video_length 500
-
-  # student, 지형 2종 + depth 패널
-  python scripts/rsl_rl/play.py --headless --multicam --with_depth \
-      --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Play-v0 \
+Example:
+  python scripts/rsl_rl/play.py --headless --multicam --panels \
+      --task Isaac-Extreme-Parkour-EM-Student-Unitree-Go2-Play-v0 \
       --num_envs 2 --video_length 1000
-
-  # 기존 방식(뷰포트 1대)
-  python scripts/rsl_rl/play.py --video --video_length 1000 \
-      --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0
 """
 
 """Launch Isaac Sim Simulator first."""
@@ -84,8 +33,10 @@ from isaaclab.app import AppLauncher
 import cli_args  # isort: skip
 
 # add argparse arguments
-parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
-parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
+parser = argparse.ArgumentParser(description="Play an RL agent with RSL-RL.")
+parser.add_argument(
+    "--video", action="store_true", default=False, help="Record a single viewport video during playback."
+)
 parser.add_argument("--video_length", type=int, default=500, help="Length of the recorded video (in steps).")
 parser.add_argument(
     "--multicam",
@@ -105,23 +56,11 @@ parser.add_argument(
 )
 parser.add_argument("--fps", type=int, default=50, help="--multicam only. Output video fps (sim is 1/step_dt = 50).")
 parser.add_argument(
-    "--with_depth",
+    "--panels",
     action="store_true",
-    default=False,
     help=(
-        "--multicam only. Paste the depth map onto the right of each frame, so one video shows the robot "
-        "and the depth view side by side. For student tasks this is the policy's actual input; for teacher "
-        "tasks a record-only depth camera (same cfg as the student's) is attached to the scene."
-    ),
-)
-parser.add_argument(
-    "--with_scandots",
-    action="store_true",
-    default=False,
-    help=(
-        "--multicam only. Paste the height scan the teacher policy actually consumes (the num_scan "
-        "slice of the observation) onto the right of each frame, drawn as a robot-centred top-down "
-        "grid. Combine with --with_depth to get RGB | depth | scandots side by side."
+        "--multicam only. Show the policy's terrain input: depth for depth policies, "
+        "GT scandots for GT-scan policies, or GT and Estimated scandots for elevation-map policies."
     ),
 )
 parser.add_argument(
@@ -181,32 +120,13 @@ parser.add_argument(
         "robot room before it walks off the 4 m wide tile. Positive is world +y (left of the course)."
     ),
 )
-parser.add_argument(
-    "--em_error_plot",
-    action="store_true",
-    default=False,
-    help=(
-        "EM student only. Every frame, average |elevation-map sample - GT scandots| per scan "
-        "cell [m] per env, then save one line-plot PNG per env (terrain) plus a CSV. Each env "
-        "stops recording once its first episode ends, so every plot holds exactly one episode "
-        "(the termination frame is marked with a vertical line)."
-    ),
-)
-parser.add_argument(
-    "--fixed_heading",
-    action="store_true",
-    default=False,
-    help=(
-        "Student policy only. Ignore the heading estimated by the depth encoder and instead set the "
-        "observation's delta-yaw terms (index 6 and 7) to (world +X) - (current robot heading) every step, "
-        "so the robot always steers toward the world forward direction."
-    ),
-)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
+if args_cli.panels and not args_cli.multicam:
+    parser.error("--panels requires --multicam.")
 # always enable cameras to record video
 # --multicam 은 TiledCamera 를 쓰므로 RTX 렌더가 필요하다. --video 의 뷰포트 녹화도 마찬가지다.
 if args_cli.video or args_cli.multicam:
@@ -219,38 +139,33 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import copy
-import gymnasium as gym
 import math
-import numpy as np
 import os
 import time
+
+import gymnasium as gym
+import isaaclab_tasks  # noqa: F401
 import torch
-
-from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
-from scripts.rsl_rl.multicam_recorder import PerEnvVideoRecorder, resolve_terrain_names
-
 from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
 from isaaclab.utils.assets import retrieve_file_path
-from isaaclab.utils.math import quat_from_euler_xyz, quat_mul, wrap_to_pi
 from isaaclab.utils.dict import print_dict
+from isaaclab.utils.math import quat_from_euler_xyz, quat_mul
 from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
-from parkour_isaaclab.terrains.extreme_parkour.config.parkour import apply_terrain_preset
-from parkour_tasks.default_cfg import CAMERA_CFG, RECORD_CAMERA_CFG
-from parkour_tasks.extreme_parkour_task.config.go2.parkour_mdp_cfg import StudentObservationsCfg
-from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
-
-from scripts.rsl_rl.exporter import (
-export_teacher_policy_as_jit, 
-export_teacher_policy_as_onnx,
-export_deploy_policy_as_jit, 
-export_deploy_policy_as_onnx,
-)
-from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
-from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
-
-import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import parse_env_cfg
 
+from parkour_isaaclab.terrains.extreme_parkour.config.parkour import apply_terrain_preset
+from parkour_tasks.default_cfg import RECORD_CAMERA_CFG
+from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
+from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
+from scripts.rsl_rl.exporter import (
+    export_deploy_policy_as_jit,
+    export_deploy_policy_as_onnx,
+    export_teacher_policy_as_jit,
+    export_teacher_policy_as_onnx,
+)
+from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
+from scripts.rsl_rl.multicam_recorder import PerEnvVideoRecorder
+from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
 
 
 def apply_spawn_offset(env_cfg):
@@ -286,9 +201,7 @@ def apply_spawn_rotation(env_cfg):
         return
     roll = math.radians(args_cli.spawn_roll)
     yaw = math.radians(args_cli.spawn_yaw)
-    delta = quat_from_euler_xyz(
-        torch.tensor([roll]), torch.tensor([0.0]), torch.tensor([yaw])
-    )
+    delta = quat_from_euler_xyz(torch.tensor([roll]), torch.tensor([0.0]), torch.tensor([yaw]))
     base = torch.tensor([env_cfg.scene.robot.init_state.rot])
     # 월드 기준 회전을 기존 자세에 얹는 순서. 기본값이 항등이라 지금은 delta 와 같지만,
     # 나중에 cfg 에 rot 이 생겨도 의도한 대로 동작하도록 곱해 둔다.
@@ -329,7 +242,8 @@ def apply_terrain_override(env_cfg):
         print("[WARN] --preset: terrain_generator 가 없어 무시한다.")
         return
     apply_terrain_preset(
-        generator, args_cli.preset,
+        generator,
+        args_cli.preset,
         one_col_per_terrain=True,
         active_overrides={"noise_range": (0.02, 0.02)},
     )
@@ -342,70 +256,16 @@ def apply_terrain_override(env_cfg):
         )
 
 
-def apply_depth_camera(env_cfg):
-    """--with_depth 인데 씬에 depth 관측이 없으면(=teacher) 녹화용으로 꽂아 넣는다.
+def snapshot_policy_panels(obs, num_prop, num_scan, *, depth=None, estimated_obs=None):
+    """Copy the terrain inputs before env.step can mutate their backing buffers."""
+    if depth is not None:
+        return depth.detach().cpu().numpy().copy(), None
 
-    teacher 는 depth 를 아예 안 보는 정책이라 씬에도 관측에도 카메라가 없다. 그래서
-    student 와 똑같은 CAMERA_CFG(RayCasterCamera) + image_features 관측군을 여기서
-    붙여 "로봇 머리 위치에서 보면 이렇게 보인다"를 영상에 같이 남긴다. 관측군 이름이
-    policy 가 아니므로 정책 입력에는 절대 섞이지 않는다 (wrapper 는 policy 군만 읽는다).
-
-    RayCasterCamera 는 mesh raycast 라 RTX 렌더를 추가로 돌리지 않는다. env 2~3 대
-    규모에서는 비용이 사실상 없다.
-    """
-    if not (args_cli.with_depth and args_cli.multicam):
-        return
-    if getattr(env_cfg.scene, "depth_camera", None) is not None:
-        return
-    env_cfg.scene.depth_camera = copy.deepcopy(CAMERA_CFG)
-    env_cfg.scene.depth_camera.update_period = env_cfg.sim.dt * env_cfg.decimation
-    obs_cfg = copy.deepcopy(StudentObservationsCfg.DepthCameraPolicyCfg())
-    # 헤드리스에서 cv2 창을 띄우려다 경고만 남긴다. 녹화에는 필요 없다.
-    obs_cfg.depth_cam.params["debug_vis"] = False
-    env_cfg.observations.depth_camera = obs_cfg
-    print("[INFO] --with_depth: 씬에 depth 관측이 없어 녹화 전용 depth 카메라를 추가한다 (정책 입력 아님).")
-
-
-def save_em_error_plots(err_hist, done_marks, terrain_names, out_dir):
-    """--em_error_plot 산출물 저장: env(지형)마다 PNG 1개 + 전체 CSV 1개.
-
-    err_hist 는 프레임마다 (num_envs,) 크기의 '스캔 전 구간 |EM − GT| cell당 평균 [m]'
-    배열이고,
-    done_marks[i] 는 env i 의 첫 episode 가 끝난 프레임 인덱스다(최대 1개).
-    첫 episode 가 끝난 뒤의 값은 NaN 으로 채워져 있으므로 그래프는 유효 구간만
-    그린다 — 그래프 하나 = episode 하나. CSV 에서도 종료 이후는 nan 이다.
-    """
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    errs = np.stack(err_hist, axis=0)  # (T, num_envs)
-    os.makedirs(out_dir, exist_ok=True)
-
-    csv_path = os.path.join(out_dir, "em_error.csv")
-    header = ",".join(f"env{i}_{name}" for i, name in enumerate(terrain_names))
-    np.savetxt(csv_path, errs, delimiter=",", header=header, comments="")
-
-    for i, name in enumerate(terrain_names):
-        fig, ax = plt.subplots(figsize=(10, 4))
-        valid = ~np.isnan(errs[:, i])
-        last = int(np.nonzero(valid)[0][-1]) if valid.any() else 0
-        ax.plot(np.arange(last + 1), errs[: last + 1, i], lw=0.8)
-        for j, step in enumerate(done_marks[i]):
-            ax.axvline(step, color="red", ls="--", lw=0.8, alpha=0.7,
-                       label="episode end" if j == 0 else None)
-        ax.set_xlabel("frame")
-        # 스캔 관측은 clip(base_z − h − 0.3, ±1) [m] 이므로 평균의 단위도 m 다.
-        ax.set_ylabel("mean |EM - GT| per scandot [m]")
-        ax.set_title(f"env{i} {name}: elevation-map error per frame")
-        if done_marks[i]:
-            ax.legend(loc="upper right")
-        fig.tight_layout()
-        png_path = os.path.join(out_dir, f"em_error_env{i}_{name}.png")
-        fig.savefig(png_path, dpi=150)
-        plt.close(fig)
-        print(f"[INFO] --em_error_plot: {png_path}")
-    print(f"[INFO] --em_error_plot: {csv_path}")
+    scan = slice(num_prop, num_prop + num_scan)
+    panels = [("GT", obs[:, scan].detach().cpu().numpy().copy())]
+    if estimated_obs is not None:
+        panels.append(("Estimated", estimated_obs[:, scan].detach().cpu().numpy().copy()))
+    return None, panels
 
 
 def main():
@@ -418,7 +278,6 @@ def main():
     apply_spawn_offset(env_cfg)
     apply_record_camera(env_cfg)
     apply_terrain_override(env_cfg)
-    apply_depth_camera(env_cfg)
     agent_cfg: ParkourRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
     # --seed 가 주어졌을 때만 env 에 심는다 (train.py:127 과 같은 경로). env 초기화가
@@ -467,7 +326,7 @@ def main():
             "video_length": args_cli.video_length,
             "disable_logger": True,
         }
-        print("[INFO] Recording videos during training.")
+        print("[INFO] Recording viewport video during playback.")
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
@@ -481,27 +340,24 @@ def main():
     print(ppo_runner)
     # obtain the trained policy for inference
 
-    estimator = ppo_runner.get_estimator_inference_policy(device=env.device) 
+    estimator = ppo_runner.get_estimator_inference_policy(device=env.device)
     if agent_cfg.algorithm.class_name == "DistillationWithExtractor":
         policy = ppo_runner.get_inference_depth_policy(device=env.unwrapped.device)
         depth_encoder = ppo_runner.get_depth_encoder_inference_policy(device=env.device)
         policy_nn = ppo_runner.alg.depth_actor
         export_model_dir = os.path.join(os.path.dirname(resume_path), "exported_deploy")
-        export_deploy_policy_as_jit(policy_nn, 
-                                    estimator,
-                                    depth_encoder,
-                                    ppo_runner.obs_normalizer, 
-                                    path=export_model_dir, 
-                                    filename="policy.pt")
+        export_deploy_policy_as_jit(
+            policy_nn, estimator, depth_encoder, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt"
+        )
         export_deploy_policy_as_onnx(
-                            policy_nn, 
-                            estimator,
-                            depth_encoder,
-                            agent_cfg,
-                            normalizer=ppo_runner.obs_normalizer, 
-                            path=export_model_dir, 
-                            filename="policy.onnx"
-                        )
+            policy_nn,
+            estimator,
+            depth_encoder,
+            agent_cfg,
+            normalizer=ppo_runner.obs_normalizer,
+            path=export_model_dir,
+            filename="policy.onnx",
+        )
 
     elif agent_cfg.algorithm.class_name == "EMDistillation":
         # elevation-map student: depth encoder 가 없고 depth_actor 만 있다.
@@ -520,40 +376,11 @@ def main():
 
     is_em = agent_cfg.algorithm.class_name == "EMDistillation"
     is_distill = agent_cfg.algorithm.class_name in ("DistillationWithExtractor", "EMDistillation")
-    if args_cli.fixed_heading:
-        if is_distill:
-            print("[INFO] --fixed_heading: 관측의 oracle heading 대신 월드 +X 방향을 목표로 삼는다.")
-        else:
-            print("[WARN] --fixed_heading 은 student(Distillation) 정책 전용이다. 이 태스크에서는 무시된다.")
-
-    record_depth = bool(args_cli.with_depth and args_cli.multicam)
-    if args_cli.with_depth and not args_cli.multicam:
-        print("[WARN] --with_depth 는 --multicam 과 같이 써야 한다. 무시한다.")
-        record_depth = False
-    if record_depth and is_em:
-        print("[WARN] --with_depth: EM student 씬에는 depth camera 가 없다. 무시한다.")
-        record_depth = False
-    if record_depth:
-        what = "정책 입력" if is_distill else "녹화 전용(정책 입력 아님)"
-        print(f"[INFO] --with_depth: 각 프레임 오른쪽에 {what} depth map 을 붙인다.")
-
-    record_scandots = bool(args_cli.with_scandots and args_cli.multicam)
-    if args_cli.with_scandots and not args_cli.multicam:
-        print("[WARN] --with_scandots 는 --multicam 과 같이 써야 한다. 무시한다.")
-        record_scandots = False
-    if record_scandots:
-        # student 는 actor 에 scandots_latent 를 직접 넘기므로 obs 의 scan 구간을
-        # 쓰지 않는다 (actor_critic_with_encoder 가 latent 가 주어지면 scan encoder
-        # 를 건너뛴다). 그래도 관측 자체는 계산돼 들어 있어서 그릴 수는 있다.
-        if is_em:
-            what = "정책 입력(elevation map 샘플 — EM student 가 실제로 본 것)"
-        elif is_distill:
-            what = "참고용(student 는 depth latent 로 대체)"
-        else:
-            what = "정책 입력"
-        print(f"[INFO] --with_scandots: 각 프레임 오른쪽에 {what} scandots 격자를 붙인다.")
-
-    robot = env.unwrapped.scene["robot"]
+    record_depth = args_cli.panels and is_distill and not is_em
+    record_scandots = args_cli.panels and not record_depth
+    if args_cli.panels:
+        content = "Depth" if record_depth else "GT | Estimated" if is_em else "GT"
+        print(f"[INFO] --panels: {content}")
 
     dt = env.unwrapped.step_dt
     estimator_paras = agent_cfg.to_dict()["estimator"]
@@ -575,27 +402,13 @@ def main():
             # 그러면 mp4 가 close 되기 전에 죽으므로 여기서 미리 끈다.
             if grid is None or grid[0] * grid[1] != num_scan:
                 print(
-                    f"[WARN] --with_scandots: height_scanner 격자 {grid} 가 num_scan={num_scan} 과 "
+                    f"[WARN] --panels: height_scanner 격자 {grid} 가 num_scan={num_scan} 과 "
                     "맞지 않는다. scandots 패널을 끈다."
                 )
                 record_scandots = False
 
-    # --em_error_plot 준비. 프레임 카운트는 multicam 녹화와 같은 지점에서 하므로
-    # 영상과 그래프의 x 축(frame)이 1:1 로 맞는다.
-    em_plot = bool(args_cli.em_error_plot)
-    if em_plot and not is_em:
-        print("[WARN] --em_error_plot 은 EM student(EMDistillation) 전용이다. 무시한다.")
-        em_plot = False
-    em_err_hist = []
-    em_done_marks = [[] for _ in range(env.num_envs)]
-    em_terrain_names = resolve_terrain_names(env) if em_plot else None
-    em_err_step = None
-    # env 별로 첫 episode 가 끝나면 False — 그 뒤 프레임은 NaN 으로 채워
-    # 그래프 하나에 episode 하나의 데이터만 남긴다.
-    em_alive = np.ones(env.num_envs, dtype=bool)
-
     timestep = 0
-    depth_camera = None
+    panel_depth = None
     # mp4 는 moov atom 을 close() 시점에 쓴다. 중간에 죽으면 파일이 통째로 재생 불가가
     # 되므로 어떤 경로로 빠져나가든 반드시 close 되게 감싼다.
     try:
@@ -604,111 +417,67 @@ def main():
             start_time = time.time()
             # run everything in inference mode
             if not is_distill:
-                # teacher 는 depth 를 안 먹지만, --with_depth 면 녹화용 관측군이 붙어 있다.
-                if record_depth:
-                    depth_camera = extras["observations"]["depth_camera"].to(env.device)
                 with torch.inference_mode():
                     # agent stepping
-                    obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = estimator.inference(obs[:, :num_prop])
-                    actions = policy(obs, hist_encoding = True)
+                    obs[:, num_prop + num_scan : num_prop + num_scan + num_priv_explicit] = estimator.inference(
+                        obs[:, :num_prop]
+                    )
+                    actions = policy(obs, hist_encoding=True)
                 # env stepping
             elif is_em:
                 # EM student: obs 의 scan 구간만 em_scan(10Hz 갱신, 사이 step 은 최신값)
                 # 으로 갈아끼우고 depth_actor 의 자체 scan_encoder 가 인코딩한다.
                 em_scan = extras["observations"]["em_scan"].to(env.device)
                 with torch.inference_mode():
-                    if args_cli.fixed_heading:
-                        delta = wrap_to_pi(0.0 - robot.data.heading_w)
-                        obs[:, 6] = 1.5 * delta
-                        obs[:, 7] = 1.5 * delta
                     obs_em = obs.clone()
-                    obs_em[:, num_prop:num_prop + num_scan] = em_scan
+                    obs_em[:, num_prop : num_prop + num_scan] = em_scan
                     # 학습(learn_em)·배포와 동일: priv_explicit 은 estimator 추정값
-                    obs_em[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = \
-                        estimator.inference(obs_em[:, :num_prop])
+                    obs_em[:, num_prop + num_scan : num_prop + num_scan + num_priv_explicit] = estimator.inference(
+                        obs_em[:, :num_prop]
+                    )
                     actions = policy(obs_em, hist_encoding=True)
-                    if em_plot:
-                        # 이 프레임의 행동을 만든 입력 기준: 스캔 전 구간(num_scan 개)의
-                        # |elevation map 샘플 − GT scandots| 의 cell당 평균, env 별로 하나씩.
-                        em_err_step = (
-                            (obs_em[:, num_prop:num_prop + num_scan]
-                             - obs[:, num_prop:num_prop + num_scan])
-                            .abs().mean(dim=1).cpu().numpy().copy()
-                        )
             else:
-                depth_camera = extras["observations"]['depth_camera'].to(env.device)
+                depth_camera = extras["observations"]["depth_camera"].to(env.device)
                 with torch.inference_mode():
-                    if env.unwrapped.common_step_counter %5 == 0:
+                    if env.unwrapped.common_step_counter % 5 == 0:
                         obs_student = obs[:, :num_prop].clone()
                         obs_student[:, 6:8] = 0
                         depth_encoder_out = depth_encoder(depth_camera, obs_student)
+                        if record_depth:
+                            # Keep the input that produced the held latent, even if the
+                            # sensor buffer changes before the next encoder update.
+                            panel_depth = depth_camera.detach().clone()
                         # 지금 encoder 는 depth embedding 32 차원만 낸다. heading 을
                         # 예측하던 시절의 체크포인트는 34 차원이라 뒤 2 개가 더 붙는데,
                         # 그건 재생 호환을 위해 폭으로 갈라서 예전처럼 obs 에 덮어쓴다.
                         depth_latent = depth_encoder_out[:, :32]
                         yaw = depth_encoder_out[:, 32:] if depth_encoder_out.shape[1] > 32 else None
-                    if args_cli.fixed_heading:
-                        # obs index 6,7 은 원래 delta_yaw / delta_next_yaw, 즉
-                        #   (goal point 방향의 월드 각도) - (로봇의 현재 진행 각도)
-                        # 다. 여기서는 관측이 주는 oracle heading 을 쓰지 않고,
-                        # goal 방향을 월드 앞 방향(+X, 각도 0)으로 고정해 같은 식으로 계산한다.
-                        #
-                        # heading_w = atan2(forward_w.y, forward_w.x) 로, 관측 코드가 쓰는
-                        # wrap_to_pi(euler_xyz_from_quat(root_quat_w)[2]) 와 같은 값이다.
-                        # 로봇 자세가 매 스텝 바뀌므로 encoder 갱신 주기(5스텝)와 무관하게
-                        # 여기서 매 스텝 다시 계산한다.
-                        # delta 는 순수한 각도(rad)로 두고, obs 에 넣을 때만 아래 encoder
-                        # 경로의 `1.5*yaw` 와 동일한 배율 1.5 를 곱한다.
-                        delta = wrap_to_pi(0.0 - robot.data.heading_w)
-                        obs[:, 6] = 1.5 * delta
-                        obs[:, 7] = 1.5 * delta
-                    elif yaw is not None:
+                    if yaw is not None:
                         # 34 차원 구 체크포인트 전용 경로. 새 정책은 teacher 와 똑같이
                         # obs 의 oracle heading 을 그대로 쓰므로 여기서 덮어쓰지 않는다.
-                        obs[:, 6:8] = 1.5*yaw
+                        obs[:, 6:8] = 1.5 * yaw
                     # obs[:, num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = estimator.inference(obs[:, :num_prop])
                     actions = policy(obs, hist_encoding=True, scandots_latent=depth_latent)
-            # env.step 이 obs 를 갈아끼우므로, 방금 정책에 넣은 scan 구간을 먼저 떠 둔다.
-            # depth 쪽과 마찬가지로 "이 프레임의 행동을 만든 입력"을 그려야 한다.
-            # EM student 는 GT(obs 의 teacher scandots)와 Measured(obs_em 의
-            # elevation map 샘플 = 실제 정책 입력)를 나란히 붙여 비교한다.
-            if record_scandots:
-                gt_np = obs[:, num_prop:num_prop + num_scan].detach().cpu().numpy()
-                if is_em:
-                    em_np = obs_em[:, num_prop:num_prop + num_scan].detach().cpu().numpy()
-                    scandots_np = [("GT", gt_np), ("Measured", em_np)]
-                else:
-                    scandots_np = gt_np
-            else:
-                scandots_np = None
+            depth_np, scandots_np = None, None
+            if record_depth or record_scandots:
+                depth_np, scandots_np = snapshot_policy_panels(
+                    obs,
+                    num_prop,
+                    num_scan,
+                    depth=panel_depth if record_depth else None,
+                    estimated_obs=obs_em if is_em else None,
+                )
             # 스텝 중에 렌더가 일어나므로 그 전에 카메라를 현재 로봇 위치로 옮겨둔다.
             if recorder is not None:
                 recorder.track_camera()
-            obs, _, dones, extras = env.step(actions)
+            obs, _, _, extras = env.step(actions)
 
             if recorder is not None:
-                # 정책 호출에 쓴 것과 같은 텐서를 그대로 그린다. 버퍼가 5 스텝마다 갱신되므로
-                # 사이 스텝에서는 직전 프레임이 유지되는데, 그게 정책이 보고 있는 실제 입력이다.
-                depth_np = depth_camera.detach().cpu().numpy() if record_depth else None
                 if not recorder.capture(depth=depth_np, scandots=scandots_np):
                     # 아직 카메라 출력이 안 나왔다. 프레임 수로 세지 않는다.
                     continue
 
-            if args_cli.video or recorder is not None or em_plot:
-                if em_plot and em_err_step is not None:
-                    # 첫 episode 가 끝난 env 는 기록을 멈춘다(NaN). 종료 프레임 자체는
-                    # 이번 episode 의 마지막 행동에 해당하므로 포함하고, 그 다음부터 끊는다.
-                    step_vals = em_err_step.copy()
-                    step_vals[~em_alive] = np.nan
-                    em_err_hist.append(step_vals)
-                    for env_id in (dones.reshape(-1) > 0).nonzero(as_tuple=False)[:, 0].tolist():
-                        if em_alive[env_id]:
-                            em_done_marks[env_id].append(len(em_err_hist) - 1)
-                            em_alive[env_id] = False
-                    # 영상 녹화가 없으면(그래프 전용) 모든 env 가 끝난 시점에 조기 종료.
-                    if recorder is None and not args_cli.video and not em_alive.any():
-                        print("[INFO] --em_error_plot: 모든 env 의 첫 episode 종료, 조기 종료한다.")
-                        break
+            if args_cli.video or recorder is not None:
                 timestep += 1
                 # Exit the play loop after recording one video
                 if timestep >= args_cli.video_length:
@@ -723,13 +492,6 @@ def main():
     finally:
         if recorder is not None:
             recorder.close()
-        # 중간에 죽어도 그때까지 모인 프레임으로 그래프를 남긴다.
-        if em_plot and em_err_hist:
-            em_out_dir = (
-                recorder.out_dir if recorder is not None
-                else os.path.join(log_dir, "videos", "em_error")
-            )
-            save_em_error_plots(em_err_hist, em_done_marks, em_terrain_names, em_out_dir)
 
     # # close the simulator
     env.close()

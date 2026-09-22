@@ -11,18 +11,19 @@ AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
 import cv2
+
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
-import matplotlib.pyplot as plt
-import numpy as np
 import os
-import torch
 
 import isaaclab.sim as sim_utils
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
@@ -37,10 +38,9 @@ from parkour_test.utils.test_terrain_config import PARKOUR_TERRAINS_CFG
 
 @configclass
 class TerrainSceneCfg(InteractiveSceneCfg):
-
     # ground plane
     terrain = TerrainImporterCfg(
-        class_type= ParkourTerrainImporter,
+        class_type=ParkourTerrainImporter,
         prim_path="/World/ground",
         terrain_type="generator",
         terrain_generator=PARKOUR_TERRAINS_CFG,
@@ -68,7 +68,9 @@ class TerrainSceneCfg(InteractiveSceneCfg):
     )
     # robot
     robot: ArticulationCfg = UNITREE_GO2_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True, debug_vis= True)
+    contact_forces = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True, debug_vis=True
+    )
     height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base",
         offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
@@ -77,6 +79,7 @@ class TerrainSceneCfg(InteractiveSceneCfg):
         debug_vis=True,
         mesh_prim_paths=["/World/ground"],
     )
+
 
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     """Run the simulator."""
@@ -128,7 +131,6 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         count += 1
         # update buffers
         scene.update(sim_dt)
-        
 
 
 def main():

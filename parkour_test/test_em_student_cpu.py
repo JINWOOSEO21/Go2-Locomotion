@@ -10,6 +10,7 @@ VRAM 이 바쁠 때도 돌릴 수 있다. 대상:
 
 실행: python parkour_test/test_em_student_cpu.py
 """
+
 import ast
 import importlib.util
 import math
@@ -70,7 +71,7 @@ def test_l1_pattern():
         abs(float(win_span) - (119 / sps)) < 1e-6
         and torch.allclose(win_gap, torch.full_like(win_gap, 1 / pitch_hz), atol=1e-6)
         and float(t.max()) <= 5.0,
-        f"(창 길이 {float(win_span)*1000:.3f} ms, 창 간격 {float(win_gap[0])*1000:.3f} ms)",
+        f"(창 길이 {float(win_span) * 1000:.3f} ms, 창 간격 {float(win_gap[0]) * 1000:.3f} ms)",
     )
 
     beta = torch.deg2rad(360.0 * t / yaw_T + phase_y_deg)
@@ -97,9 +98,9 @@ def test_capsule_filter():
     dirs = torch.tensor(
         [
             [
-                [-1.0, 0.0, 0.0],   # 뒤로 수평 — 몸통 관통
-                [1.0, 0.0, 0.0],    # 앞으로 — 멀어지므로 비관통
-                [0.0, 0.0, 1.0],    # 상방 — 비관통
+                [-1.0, 0.0, 0.0],  # 뒤로 수평 — 몸통 관통
+                [1.0, 0.0, 0.0],  # 앞으로 — 멀어지므로 비관통
+                [0.0, 0.0, 1.0],  # 상방 — 비관통
             ]
         ]
     )
@@ -114,8 +115,11 @@ def test_capsule_filter():
     t2 = torch.tensor([[2.0]])
     skip_on = pen_fn(o_in, d_up, t2, seg_a, seg_b, 0.11)
     skip_off = pen_fn(o_in, d_up, t2, seg_a, seg_b, 0.11, t0=0.0)
-    check("2b.capsule_t0_skip", (not bool(skip_on.any())) and bool(skip_off.all()),
-          f"(t0=0.12: {skip_on.tolist()}, t0=0: {skip_off.tolist()})")
+    check(
+        "2b.capsule_t0_skip",
+        (not bool(skip_on.any())) and bool(skip_off.all()),
+        f"(t0=0.12: {skip_on.tolist()}, t0=0: {skip_off.tolist()})",
+    )
 
 
 # ---------------------------------------------------------------- 3. 샘플링
@@ -165,8 +169,11 @@ def test_sampling():
     maps[:, 5] = 0.15
     maps[:, 6] = 1.0
     h, vf, uf = fn(maps, centers, torch.zeros(N, P, 2), torch.tensor([0.3]), res, cell_n)
-    check("3d.cascade_upper_bound",
-          abs(float(h) + 0.15) < 1e-6 and float(vf) < 1e-6 and float(uf) > 0.99, f"(h={float(h):.4f})")
+    check(
+        "3d.cascade_upper_bound",
+        abs(float(h) + 0.15) < 1e-6 and float(vf) < 1e-6 and float(uf) > 0.99,
+        f"(h={float(h):.4f})",
+    )
 
     # (e) cascade 3단계: 아무것도 없음 → 0 (base 기준 평지 가정)
     maps, centers = make(0.0)

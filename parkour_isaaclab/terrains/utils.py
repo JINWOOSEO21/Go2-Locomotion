@@ -1,19 +1,21 @@
-
 from __future__ import annotations
 
 import copy
 import functools
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
 import numpy as np
 import trimesh
-from collections.abc import Callable
 from scipy.ndimage import binary_dilation
-from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from ..terrains import ParkourSubTerrainBaseCfg
 
+
 def parkour_field_to_mesh(func: Callable) -> Callable:
     @functools.wraps(func)
-    def wrapper(difficulty: float, cfg: ParkourSubTerrainBaseCfg, num_goals:int):
+    def wrapper(difficulty: float, cfg: ParkourSubTerrainBaseCfg, num_goals: int):
         if cfg.border_width > 0 and cfg.border_width < cfg.horizontal_scale:
             raise ValueError(
                 f"The border width ({cfg.border_width}) must be greater than or equal to the"
@@ -41,12 +43,12 @@ def parkour_field_to_mesh(func: Callable) -> Callable:
             heights, cfg.horizontal_scale, cfg.vertical_scale, cfg.slope_threshold
         )
         half_edge_width = int(cfg.edge_width_thresh / cfg.horizontal_scale)
-        structure = np.ones((half_edge_width*2+1, 1))
+        structure = np.ones((half_edge_width * 2 + 1, 1))
         x_edge_mask = binary_dilation(x_edge_mask, structure=structure)
         cfg.size = terrain_size
         mesh = trimesh.Trimesh(vertices=vertices, faces=triangles)
         if cfg.use_simplified:
-            mesh = mesh.simplify_quadric_decimation(face_count = int(0.65*triangles.shape[0]) , aggression=3)
+            mesh = mesh.simplify_quadric_decimation(face_count=int(0.65 * triangles.shape[0]), aggression=3)
         # compute origin
         x1 = int((cfg.size[0] * 0.5 - 1) / cfg.horizontal_scale)
         x2 = int((cfg.size[0] * 0.5 + 1) / cfg.horizontal_scale)
@@ -57,6 +59,7 @@ def parkour_field_to_mesh(func: Callable) -> Callable:
         return [mesh], origin, goals, goal_heights, x_edge_mask
 
     return wrapper
+
 
 def convert_height_field_to_mesh(
     height_field: np.ndarray, horizontal_scale: float, vertical_scale: float, slope_threshold: float | None = None
@@ -112,4 +115,4 @@ def convert_height_field_to_mesh(
         triangles[start + 1 : stop : 2, 0] = ind0
         triangles[start + 1 : stop : 2, 1] = ind2
         triangles[start + 1 : stop : 2, 2] = ind3
-    return vertices, triangles, move_x!=0
+    return vertices, triangles, move_x != 0

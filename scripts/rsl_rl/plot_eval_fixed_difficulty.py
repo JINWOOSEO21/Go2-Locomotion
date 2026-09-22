@@ -23,6 +23,7 @@ import json
 import os
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -126,9 +127,7 @@ def build_summary(df: pd.DataFrame, raw_cols: list[str]) -> pd.DataFrame:
             row[f"rew_per_s_{label}_mean"] = mean
             row[f"rew_per_s_{label}_ci95"] = ci
             row[f"duration_s_{label}_mean"] = subset["duration_s"].mean() if len(subset) else float("nan")
-            row[f"dist_from_start_{label}_mean"] = (
-                subset["dist_from_start"].mean() if len(subset) else float("nan")
-            )
+            row[f"dist_from_start_{label}_mean"] = subset["dist_from_start"].mean() if len(subset) else float("nan")
             for col in raw_cols:
                 row[f"{col}_{label}_mean"] = subset[col].mean() if len(subset) else float("nan")
 
@@ -151,8 +150,17 @@ def _draw_reward(ax, summary: pd.DataFrame, legend: bool):
         y = summary[f"rew_per_s_{key}_mean"].to_numpy()
         ci = summary[f"rew_per_s_{key}_ci95"].to_numpy()
         ax.fill_between(x, y - ci, y + ci, color=color, alpha=0.15, linewidth=0)
-        ax.plot(x, y, color=color, linewidth=2.0, marker="o", markersize=5.5,
-                markeredgecolor=SURFACE, markeredgewidth=1.2, label=label)
+        ax.plot(
+            x,
+            y,
+            color=color,
+            linewidth=2.0,
+            marker="o",
+            markersize=5.5,
+            markeredgecolor=SURFACE,
+            markeredgewidth=1.2,
+            label=label,
+        )
     ax.set_ylabel("reward [1/s]", color=INK_MUTED, fontsize=10)
     if legend:
         leg = ax.legend(frameon=False, fontsize=10, loc="lower right")
@@ -195,11 +203,19 @@ def plot_reward(summary: pd.DataFrame, meta: dict, path: str, zoom_from: int | N
         subtitle = f"난이도 {difficulty} → {param_line}\n{subtitle}"
     axes[0].set_title(
         f"고정 난이도 {difficulty} 에서의 초당 reward (클리핑 이전 가중합)",
-        color=INK, fontsize=13, pad=48 if param_line else 32, loc="left",
+        color=INK,
+        fontsize=13,
+        pad=48 if param_line else 32,
+        loc="left",
     )
     axes[0].text(
-        0.0, 1.012, subtitle,
-        transform=axes[0].transAxes, color=INK_MUTED, fontsize=9.5, va="bottom",
+        0.0,
+        1.012,
+        subtitle,
+        transform=axes[0].transAxes,
+        color=INK_MUTED,
+        fontsize=9.5,
+        va="bottom",
         linespacing=1.6,
     )
 
@@ -207,7 +223,10 @@ def plot_reward(summary: pd.DataFrame, meta: dict, path: str, zoom_from: int | N
         _draw_reward(axes[1], zoomed, legend=False)
         axes[1].set_title(
             f"iteration {int(zoomed['iteration'].min())} 이후 확대 — 수렴 구간",
-            color=INK, fontsize=12, pad=12, loc="left",
+            color=INK,
+            fontsize=12,
+            pad=12,
+            loc="left",
         )
         axes[1].set_xlabel("학습 iteration", color=INK_MUTED, fontsize=10)
     else:
@@ -225,21 +244,38 @@ def plot_diagnostics(summary: pd.DataFrame, meta: dict, path: str):
 
     ax = axes[0]
     style_axes(ax)
-    ax.plot(x, summary["success_rate"].to_numpy() * 100, color=SERIES[0], linewidth=2.0,
-            marker="o", markersize=5.5, markeredgecolor=SURFACE, markeredgewidth=1.2)
+    ax.plot(
+        x,
+        summary["success_rate"].to_numpy() * 100,
+        color=SERIES[0],
+        linewidth=2.0,
+        marker="o",
+        markersize=5.5,
+        markeredgecolor=SURFACE,
+        markeredgewidth=1.2,
+    )
     ax.set_ylabel("완주율 [%]", color=INK_MUTED, fontsize=10)
     ax.set_ylim(0, 100)
     ax.set_title(
         "완주율 — reward 비교가 생존율 차이에 오염됐는지 확인용",
-        color=INK, fontsize=12, pad=12, loc="left",
+        color=INK,
+        fontsize=12,
+        pad=12,
+        loc="left",
     )
 
     ax = axes[1]
     style_axes(ax)
     present = [r for r in REASON_ORDER if summary.get(f"frac_{r}", pd.Series(dtype=float)).fillna(0).sum() > 0]
     stack = [summary[f"frac_{r}"].fillna(0).to_numpy() * 100 for r in present]
-    ax.stackplot(x, *stack, colors=SERIES[: len(present)],
-                 labels=[REASON_LABEL[r] for r in present], edgecolor=SURFACE, linewidth=1.0)
+    ax.stackplot(
+        x,
+        *stack,
+        colors=SERIES[: len(present)],
+        labels=[REASON_LABEL[r] for r in present],
+        edgecolor=SURFACE,
+        linewidth=1.0,
+    )
     ax.set_ylim(0, 100)
     ax.set_ylabel("에피소드 비율 [%]", color=INK_MUTED, fontsize=10)
     ax.set_xlabel("학습 iteration", color=INK_MUTED, fontsize=10)
@@ -287,8 +323,12 @@ def main():
     # 지역 변종 중 하나(여기서는 JP)만 이름으로 등록하는 경우가 있다. 어느 변종이든
     # 한글 글리프를 모두 포함하므로 JP 이름도 후보에 넣는다.
     for family in (
-        "NanumGothic", "Noto Sans CJK KR", "Noto Sans CJK JP",
-        "Noto Sans KR", "Malgun Gothic", "AppleGothic",
+        "NanumGothic",
+        "Noto Sans CJK KR",
+        "Noto Sans CJK JP",
+        "Noto Sans KR",
+        "Malgun Gothic",
+        "AppleGothic",
     ):
         if any(f.name == family for f in matplotlib.font_manager.fontManager.ttflist):
             plt.rcParams["font.family"] = family
@@ -303,8 +343,11 @@ def main():
     print(f"[INFO] {reward_path}")
 
     print(f"[INFO] {summary_path}")
-    print(summary[["iteration", "n_episodes", "success_rate",
-                   "rew_per_s_success_mean", "rew_per_s_all_mean"]].to_string(index=False))
+    print(
+        summary[["iteration", "n_episodes", "success_rate", "rew_per_s_success_mean", "rew_per_s_all_mean"]].to_string(
+            index=False
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
 import cv2
+
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -18,43 +19,47 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import os
-import torch
 
 import isaaclab.sim as sim_utils
+import torch
+import torchvision
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
-from isaaclab.sensors import CameraCfg, Camera
-from isaaclab.utils import configclass
-
+from isaaclab.sensors import Camera, CameraCfg
 from isaaclab.terrains import TerrainImporterCfg
-from parkour_isaaclab.terrains.parkour_terrain_importer import ParkourTerrainImporter
-from parkour_test.utils.test_terrain_config import PARKOUR_TERRAINS_CFG
+from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
-from parkour_tasks.extreme_parkour_task.config.go2 import agents 
 from isaaclab.utils.math import quat_from_euler_xyz
-import torchvision
 
-CLIP_RANGE = (0.3, 3.)
+from parkour_isaaclab.terrains.parkour_terrain_importer import ParkourTerrainImporter
+from parkour_tasks.extreme_parkour_task.config.go2 import agents
+from parkour_test.utils.test_terrain_config import PARKOUR_TERRAINS_CFG
+
+CLIP_RANGE = (0.3, 3.0)
 RESIZE = (87, 58)
 resize_transform = torchvision.transforms.Resize(
-                                    (RESIZE[1], RESIZE[0]), 
-                                    interpolation=torchvision.transforms.InterpolationMode.BICUBIC).to('cuda')
-    
-def _process_depth_image( depth_image):
-    depth_image = torch.from_numpy(depth_image[:,:,0]).to('cuda')
+    (RESIZE[1], RESIZE[0]), interpolation=torchvision.transforms.InterpolationMode.BICUBIC
+).to("cuda")
+
+
+def _process_depth_image(depth_image):
+    depth_image = torch.from_numpy(depth_image[:, :, 0]).to("cuda")
     # These operations are replicated on the hardware
     depth_image = _crop_depth_image(depth_image)
     depth_image = resize_transform(depth_image[None, :]).squeeze()
     depth_image = _normalize_depth_image(depth_image)
     return depth_image.detach().cpu().numpy()
 
+
 def _crop_depth_image(depth_image):
     return depth_image[:-2, 4:-4]
 
-def _normalize_depth_image( depth_image):
-    depth_image = depth_image 
-    depth_image = (depth_image - CLIP_RANGE[0]) / (CLIP_RANGE[1] - CLIP_RANGE[0])  - 0.5
+
+def _normalize_depth_image(depth_image):
+    depth_image = depth_image
+    depth_image = (depth_image - CLIP_RANGE[0]) / (CLIP_RANGE[1] - CLIP_RANGE[0]) - 0.5
     return depth_image
+
 
 ##
 # Pre-defined configs
@@ -63,43 +68,44 @@ CAMERA_CFG = CameraCfg(
     prim_path="{ENV_REGEX_NS}/Robot/base/front_cam",
     height=60,
     width=106,
-    history_length = 2,
-    update_period = 0.005*5,
+    history_length=2,
+    update_period=0.005 * 5,
     data_types=["distance_to_image_plane"],
     spawn=sim_utils.PinholeCameraCfg(
-        focal_length=24.0, 
-        focus_distance=400.0, 
-        horizontal_aperture=20.955,
-        clipping_range=CLIP_RANGE
+        focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=CLIP_RANGE
     ),
     offset=CameraCfg.OffsetCfg(
-        pos=(0.33, 0.0, 0.08), 
-        rot=quat_from_euler_xyz(*tuple(torch.deg2rad(torch.tensor([180,30,-90])))) * torch.tensor([1.,1.,1.,-1]), 
-        convention="ros"
-        ),
-    colorize_semantic_segmentation = False , 
-    colorize_instance_id_segmentation = False , 
-    colorize_instance_segmentation = False , 
-    depth_clipping_behavior = 'max'
+        pos=(0.33, 0.0, 0.08),
+        rot=quat_from_euler_xyz(*tuple(torch.deg2rad(torch.tensor([180, 30, -90]))))
+        * torch.tensor([1.0, 1.0, 1.0, -1]),
+        convention="ros",
+    ),
+    colorize_semantic_segmentation=False,
+    colorize_instance_id_segmentation=False,
+    colorize_instance_segmentation=False,
+    depth_clipping_behavior="max",
 )
 
 CAMERA_USD_CFG = AssetBaseCfg(
     prim_path="{ENV_REGEX_NS}/Robot/base/d435",
-    spawn=sim_utils.UsdFileCfg(usd_path=os.path.join(agents.__path__[0],'d435.usd')),
+    spawn=sim_utils.UsdFileCfg(usd_path=os.path.join(agents.__path__[0], "d435.usd")),
     init_state=AssetBaseCfg.InitialStateCfg(
-            pos=(0.33, 0.0, 0.08), 
-            rot=quat_from_euler_xyz(*tuple(torch.deg2rad(torch.tensor([180,30,-90])))) * torch.tensor([1.,1.,1.,-1])
-            )
+        pos=(0.33, 0.0, 0.08),
+        rot=quat_from_euler_xyz(*tuple(torch.deg2rad(torch.tensor([180, 30, -90]))))
+        * torch.tensor([1.0, 1.0, 1.0, -1]),
+    ),
 )
 
 from isaaclab_assets.robots.unitree import UNITREE_GO2_CFG  # isort: skip
+
+
 @configclass
 class SensorsSceneCfg(InteractiveSceneCfg):
     """Design the scene with sensors on the robot."""
 
     # ground plane
     terrain = TerrainImporterCfg(
-        class_type= ParkourTerrainImporter,
+        class_type=ParkourTerrainImporter,
         prim_path="/World/ground",
         terrain_type="generator",
         terrain_generator=PARKOUR_TERRAINS_CFG,
@@ -130,9 +136,9 @@ class SensorsSceneCfg(InteractiveSceneCfg):
     # sensors
     camera = CAMERA_CFG
 
-        # Add USD camera as a static asset
+    # Add USD camera as a static asset
     camera_usd = CAMERA_USD_CFG
-    
+
     sky_light = AssetBaseCfg(
         prim_path="/World/skyLight",
         spawn=sim_utils.DomeLightCfg(
@@ -140,6 +146,7 @@ class SensorsSceneCfg(InteractiveSceneCfg):
             texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
         ),
     )
+
 
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     """Run the simulator."""
@@ -165,14 +172,14 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
             root_state = scene["robot"].data.default_root_state.clone()
             cfg = scene.terrain.cfg.terrain_generator
             origin = scene.env_origins
-            origin[:,-1] = 0
-            positions = root_state[:, 0:3] + origin - torch.tensor((cfg.size[1]/2, 0, 0)).to('cuda')
+            origin[:, -1] = 0
+            positions = root_state[:, 0:3] + origin - torch.tensor((cfg.size[1] / 2, 0, 0)).to("cuda")
             scene["robot"].write_root_pose_to_sim(torch.cat([positions, root_state[:, 3:7]], dim=-1))
-            camera: Camera = scene.sensors['camera']
+            camera: Camera = scene.sensors["camera"]
             # random_pitch = (70 - 60) * torch.rand((scene.num_envs,1)) + 50
             # roll_tensor = torch.ones_like(random_pitch) * 180
             # yaw_tensor = torch.ones_like(random_pitch) * -90
-            # data = quat_from_euler_xyz(roll_tensor, random_pitch, yaw_tensor) * torch.tensor([1.,1.,1.,-1]) 
+            # data = quat_from_euler_xyz(roll_tensor, random_pitch, yaw_tensor) * torch.tensor([1.,1.,1.,-1])
             # camera.set_world_poses(orientations = data.squeeze(1), convention = 'ros')
             camera.reset()
             # clear internal buffers
@@ -194,16 +201,16 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         # update buffers
         scene.update(sim_dt)
 
-        
-        ## visualize depth camera 
+        ## visualize depth camera
         depth_camera = scene["camera"].data.output["distance_to_image_plane"].detach().cpu().numpy()
         env_num, image_width, image_hight, _ = depth_camera.shape
-        depth_camera = depth_camera.reshape(-1 ,image_hight,1)
-        cv2.imshow('depth_camera',depth_camera)
+        depth_camera = depth_camera.reshape(-1, image_hight, 1)
+        cv2.imshow("depth_camera", depth_camera)
         cv2.waitKey(1)
         process_image = _process_depth_image(depth_camera)
-        cv2.imshow('process_image',process_image)
+        cv2.imshow("process_image", process_image)
         cv2.waitKey(1)
+
 
 def main():
     """Main function."""
@@ -211,7 +218,7 @@ def main():
     sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
     sim = sim_utils.SimulationContext(sim_cfg)
     # Set main camera
-    sim.set_camera_view(eye=(-0., 2., 1.), target=[0.0, 0.0, 0.0])
+    sim.set_camera_view(eye=(-0.0, 2.0, 1.0), target=[0.0, 0.0, 0.0])
     # design scene
     scene_cfg = SensorsSceneCfg(num_envs=5, env_spacing=2.0)
     scene = InteractiveScene(scene_cfg)
@@ -222,11 +229,14 @@ def main():
     # Run the simulator
     run_simulator(sim, scene)
     from isaaclab.app import AppLauncher
+
     app_launcher = AppLauncher(headless=True)
     simulation_app = app_launcher.app
 
-    from parkour_tasks.extreme_parkour_task.config.go2 import agents 
+    from parkour_tasks.extreme_parkour_task.config.go2 import agents
+
     simulation_app.close()
+
 
 if __name__ == "__main__":
     # run the main function

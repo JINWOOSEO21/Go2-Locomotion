@@ -4,22 +4,24 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import builtins
-import torch
 from collections.abc import Sequence
 from typing import Any
 
 import omni.log
-from isaacsim.core.simulation_manager import SimulationManager
-from isaaclab.utils.timer import Timer
-from isaaclab.managers import ActionManager, ObservationManager, EventManager, RecorderManager
-from .parkour_manager_based_env_cfg import ParkourManagerBasedEnvCfg
-from parkour_isaaclab.managers import ParkourManager
+import torch
 from isaaclab.envs import ManagerBasedEnv
-from isaaclab.scene import InteractiveScene
 from isaaclab.envs.common import VecEnvObs
+from isaaclab.managers import ActionManager, EventManager, ObservationManager, RecorderManager
+from isaaclab.scene import InteractiveScene
 from isaaclab.sim import SimulationContext
+from isaaclab.utils.timer import Timer
+from isaacsim.core.simulation_manager import SimulationManager
 
 from parkour_isaaclab.envs.parkour_viewprot_camera_contoller import ParkourViewportCameraController
+from parkour_isaaclab.managers import ParkourManager
+
+from .parkour_manager_based_env_cfg import ParkourManagerBasedEnvCfg
+
 
 class ParkourManagerBasedEnv(ManagerBasedEnv):
     def __init__(self, cfg: ParkourManagerBasedEnvCfg):
@@ -125,7 +127,6 @@ class ParkourManagerBasedEnv(ManagerBasedEnv):
         # initialize observation buffers
         self.obs_buf = {}
 
-
     def load_managers(self):
         # prepare the managers
         # -- event manager (we print it here to make the logging consistent)
@@ -182,8 +183,6 @@ class ParkourManagerBasedEnv(ManagerBasedEnv):
                 self.sim.render()
         # return observations
         return self.obs_buf, self.extras
-
-
 
     def _reset_idx(self, env_ids: Sequence[int]):
         """Reset environments based on specified indices.

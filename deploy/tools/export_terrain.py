@@ -64,9 +64,13 @@ parser.add_argument("--num_envs", type=int, default=1)
 parser.add_argument("--seed", type=int, default=1)
 parser.add_argument("--out-dir", required=True)
 parser.add_argument("--margin", type=float, default=2.0, help="지형 bbox 바깥으로 더 굽는 여유 [m]")
-parser.add_argument("--res", type=float, default=None,
-                    help="hfield 격자 간격 [m]. 기본 horizontal_scale/2 — slope_threshold 가 만드는 "
-                         "반칸(0.05) 수직면을 표현하려면 절반 간격이 필요하다.")
+parser.add_argument(
+    "--res",
+    type=float,
+    default=None,
+    help="hfield 격자 간격 [m]. 기본 horizontal_scale/2 — slope_threshold 가 만드는 "
+    "반칸(0.05) 수직면을 표현하려면 절반 간격이 필요하다.",
+)
 parser.add_argument("--disable_fabric", action="store_true", default=False)
 cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
@@ -76,10 +80,10 @@ app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 import gymnasium as gym  # noqa: E402
+import isaaclab_tasks  # noqa: F401, E402
 import numpy as np  # noqa: E402
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 
-import isaaclab_tasks  # noqa: F401, E402
 import parkour_tasks  # noqa: F401, E402
 
 
@@ -100,7 +104,7 @@ def bake_heightfield(mesh, res: float, xlo, xhi, ylo, yhi):
     x0, y0 = xlo, ylo
     gx = x0 + np.arange(nx) * res
     gy = y0 + np.arange(ny) * res
-    GX, GY = np.meshgrid(gx, gy)                       # (ny, nx)
+    GX, GY = np.meshgrid(gx, gy)  # (ny, nx)
     n = GX.size
     z_top = float(np.asarray(mesh.vertices)[:, 2].max()) + 1.0
     origins = np.stack([GX.ravel(), GY.ravel(), np.full(n, z_top)], axis=1)
@@ -117,7 +121,9 @@ def bake_heightfield(mesh, res: float, xlo, xhi, ylo, yhi):
 
 def main():
     env_cfg = parse_env_cfg(
-        args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs,
+        args_cli.task,
+        device=args_cli.device,
+        num_envs=args_cli.num_envs,
         use_fabric=not args_cli.disable_fabric,
     )
     agent_cfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
@@ -134,8 +140,10 @@ def main():
         hs, vs = float(tcfg.horizontal_scale), float(tcfg.vertical_scale)
         mesh = gen.terrain_mesh
         print(f"[INFO] mesh: vertices={len(mesh.vertices)} faces={len(mesh.faces)}")
-        print(f"[INFO] horizontal_scale={hs} vertical_scale={vs} "
-              f"num_rows={tcfg.num_rows} num_cols={tcfg.num_cols} size={tcfg.size}")
+        print(
+            f"[INFO] horizontal_scale={hs} vertical_scale={vs} "
+            f"num_rows={tcfg.num_rows} num_cols={tcfg.num_cols} size={tcfg.size}"
+        )
 
         os.makedirs(args_cli.out_dir, exist_ok=True)
         obj_path = os.path.join(args_cli.out_dir, "terrain.obj")
@@ -144,7 +152,7 @@ def main():
 
         # 테두리(border_width=20m)는 평지라 통째로 구울 필요가 없다. 지형 타일
         # 영역 + margin 만 굽고, 바깥은 MuJoCo 쪽에서 평면으로 깐다.
-        origins = np.asarray(gen.terrain_origins)          # (rows, cols, 3)
+        origins = np.asarray(gen.terrain_origins)  # (rows, cols, 3)
         half_x = tcfg.num_rows * tcfg.size[0] / 2.0
         half_y = tcfg.num_cols * tcfg.size[1] / 2.0
         m = args_cli.margin
@@ -157,7 +165,7 @@ def main():
         # --- 검증: IsaacLab 자신의 height_scanner 적중점과 대조 ---
         scanner = env.unwrapped.scene.sensors["height_scanner"]
         env.reset()
-        hits = scanner.data.ray_hits_w[0].detach().cpu().numpy()   # (132, 3)
+        hits = scanner.data.ray_hits_w[0].detach().cpu().numpy()  # (132, 3)
         ok = np.isfinite(hits).all(axis=-1)
         hx, hy, hz = hits[ok, 0], hits[ok, 1], hits[ok, 2]
         fi = np.clip((hx - x0) / res, 0, H.shape[1] - 1.001)
@@ -165,8 +173,10 @@ def main():
         i0, j0 = fi.astype(int), fj.astype(int)
         tx, ty = fi - i0, fj - j0
         baked = (
-            H[j0, i0] * (1 - tx) * (1 - ty) + H[j0, i0 + 1] * tx * (1 - ty)
-            + H[j0 + 1, i0] * (1 - tx) * ty + H[j0 + 1, i0 + 1] * tx * ty
+            H[j0, i0] * (1 - tx) * (1 - ty)
+            + H[j0, i0 + 1] * tx * (1 - ty)
+            + H[j0 + 1, i0] * (1 - tx) * ty
+            + H[j0 + 1, i0 + 1] * tx * ty
         )
         d = np.abs(baked - hz)
         print(f"\n[검증] height_scanner 적중점 {ok.sum()}개 vs 구운 격자 (쌍선형 보간)")
@@ -177,18 +187,26 @@ def main():
         robot_spawn = np.asarray(env.unwrapped.scene["robot"].data.root_pos_w[0].detach().cpu())
         np.savez_compressed(
             os.path.join(args_cli.out_dir, "terrain_meta.npz"),
-            hfield=H.astype(np.float32), x0=x0, y0=y0, res=res, hs=hs, vs=vs,
+            hfield=H.astype(np.float32),
+            x0=x0,
+            y0=y0,
+            res=res,
+            hs=hs,
+            vs=vs,
             terrain_origins=origins,
             env_origins=np.asarray(terrain.env_origins.detach().cpu()),
             goals=np.asarray(gen.goals),
             terrain_names=np.asarray(gen.terrain_names),
             terrain_type=np.asarray(gen.terrain_type),
-            num_rows=tcfg.num_rows, num_cols=tcfg.num_cols, tile_size=np.asarray(tcfg.size),
+            num_rows=tcfg.num_rows,
+            num_cols=tcfg.num_cols,
+            tile_size=np.asarray(tcfg.size),
             difficulty_range=np.asarray(tcfg.difficulty_range),
             border_width=tcfg.border_width,
             robot_spawn_pos_w=robot_spawn,
             scan_check_max_mm=d.max() * 1000.0,
-            task=np.array(args_cli.task), seed=agent_cfg.seed,
+            task=np.array(args_cli.task),
+            seed=agent_cfg.seed,
         )
         print(f"\n[INFO] meta 저장: {os.path.join(args_cli.out_dir, 'terrain_meta.npz')}")
         print(f"  hfield {H.shape}  x0={x0:.3f} y0={y0:.3f} res={res}")

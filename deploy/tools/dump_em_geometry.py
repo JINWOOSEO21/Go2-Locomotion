@@ -21,10 +21,10 @@
 Isaac 종료 시 stdout 이 잘리는 함정이 있어 결과는 파일로만 쓰고, 성공/실패는
 [RESULT] 마커로 알린다.
 """
+
 import argparse
 
 import numpy as np
-
 from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser()
@@ -38,9 +38,8 @@ args.headless = True
 app_launcher = AppLauncher(args)
 simulation_app = app_launcher.app
 
-import torch  # noqa: E402
-
 import isaaclab.sim as sim_utils  # noqa: E402
+import torch  # noqa: E402
 from isaaclab.assets import Articulation  # noqa: E402
 from isaaclab.utils.math import matrix_from_quat  # noqa: E402
 
@@ -99,9 +98,7 @@ try:
             u = torch.rand(len(joint_names), generator=gen)
             q = q_lo + u * (q_hi - q_lo)
         qd = torch.zeros_like(q)
-        robot.write_joint_state_to_sim(
-            q.to(sim.device).unsqueeze(0), qd.to(sim.device).unsqueeze(0)
-        )
+        robot.write_joint_state_to_sim(q.to(sim.device).unsqueeze(0), qd.to(sim.device).unsqueeze(0))
         # 관절각을 강제로 넣은 뒤 바디 pose 가 갱신되려면 물리 한 스텝이 필요하다.
         # 5 ms 동안 중력으로 조금 흐르므로, 명령값이 아니라 **읽어온 실제값**을
         # 기준값으로 저장한다 — 그래야 대조가 정확해진다.

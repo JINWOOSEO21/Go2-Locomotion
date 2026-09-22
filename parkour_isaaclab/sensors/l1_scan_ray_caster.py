@@ -26,13 +26,13 @@ env 별 초기 모터 위상만 랜덤이다.
 self-filter 프리미티브 테이블(GO2_SELF_FILTER_CAPSULES)도 여기 둔다 — 센서와 함께
 "로봇 기하"라는 한 가지 지식을 이루기 때문이다.
 """
+
 from __future__ import annotations
 
 import math
 from collections.abc import Sequence
 
 import torch
-
 from isaaclab.sensors import MultiMeshRayCaster, MultiMeshRayCasterCfg
 from isaaclab.sensors.ray_caster.patterns import LidarPatternCfg
 from isaaclab.utils import configclass
@@ -147,9 +147,9 @@ class L1ScanRayCaster(MultiMeshRayCaster):
         유효 창: α 가 −90° 를 지나는 순간부터 1/360 s (= 회전당 120 샘플).
         순수 텐서 함수 — CPU 단위 테스트 대상.
         """
-        samples_per_rev = samples_per_second / pitch_hz          # 240
-        valid_per_rev = int(round(samples_per_rev / 2))          # 120
-        n_revs = num_rays // valid_per_rev                       # 18
+        samples_per_rev = samples_per_second / pitch_hz  # 240
+        valid_per_rev = int(round(samples_per_rev / 2))  # 120
+        n_revs = num_rays // valid_per_rev  # 18
         rev_T = 1.0 / pitch_hz
         # α(t) = ((360·pitch_hz·t + φ) mod 360) − 180 이 −90 이 되는 최초 시각:
         # (360·pitch_hz·t + φ) mod 360 == 90
@@ -157,11 +157,12 @@ class L1ScanRayCaster(MultiMeshRayCaster):
         # t_end 이전에 창이 완결(시작+1/360s ≤ t_end)된 마지막 회전 번호
         n_last = torch.floor((t_end - t_cross0 - 0.5 * rev_T) * pitch_hz)
         revs = n_last - torch.arange(n_revs - 1, -1, -1, device=t_end.device).view(1, -1)  # (n, n_revs)
-        i = torch.arange(valid_per_rev, device=t_end.device, dtype=t_end.dtype)            # (120,)
-        t = (t_cross0.unsqueeze(-1) + revs.unsqueeze(-1) * rev_T
-             + (i + 0.5).view(1, 1, -1) / samples_per_second)                              # (n, n_revs, 120)
-        alpha_deg = -90.0 + (i + 0.5) * (360.0 / samples_per_rev)                          # (120,)
-        alpha = torch.deg2rad(alpha_deg).repeat(n_revs)                                    # (R,)
+        i = torch.arange(valid_per_rev, device=t_end.device, dtype=t_end.dtype)  # (120,)
+        t = (
+            t_cross0.unsqueeze(-1) + revs.unsqueeze(-1) * rev_T + (i + 0.5).view(1, 1, -1) / samples_per_second
+        )  # (n, n_revs, 120)
+        alpha_deg = -90.0 + (i + 0.5) * (360.0 / samples_per_rev)  # (120,)
+        alpha = torch.deg2rad(alpha_deg).repeat(n_revs)  # (R,)
         return t.reshape(t.shape[0], -1), alpha
 
     def _initialize_rays_impl(self):
@@ -169,7 +170,8 @@ class L1ScanRayCaster(MultiMeshRayCaster):
         samples_per_rev = self.cfg.samples_per_second * self.cfg.pitch_period_s
         if abs(samples_per_rev - round(samples_per_rev)) > 1e-6 or self.num_rays % int(round(samples_per_rev / 2)):
             raise ValueError(
-                f"num_rays({self.num_rays}) 는 회전당 유효 샘플 수({samples_per_rev / 2:.1f})의 배수여야 한다.")
+                f"num_rays({self.num_rays}) 는 회전당 유효 샘플 수({samples_per_rev / 2:.1f})의 배수여야 한다."
+            )
         n_env = self._view.count
         # env 별 초기 모터 위상 (고정 랜덤 — 이후 결정론적)
         self._l1_phase_pitch_deg = torch.rand(n_env, 1, device=self._device) * 360.0
@@ -180,12 +182,19 @@ class L1ScanRayCaster(MultiMeshRayCaster):
         n_env = len(env_ids)
         t_end = self._timestamp[env_ids].view(n_env, 1)
         t, alpha = self.valid_frame_times(
-            t_end, self._l1_phase_pitch_deg[env_ids], self.num_rays,
-            1.0 / self.cfg.pitch_period_s, self.cfg.samples_per_second)
+            t_end,
+            self._l1_phase_pitch_deg[env_ids],
+            self.num_rays,
+            1.0 / self.cfg.pitch_period_s,
+            self.cfg.samples_per_second,
+        )
         beta = torch.deg2rad(360.0 * t / self.cfg.yaw_period_s + self._l1_phase_yaw_deg[env_ids])
         dirs = self.directions_from_angles(
-            alpha.unsqueeze(0).expand_as(t), beta,
-            math.radians(self.cfg.theta_angle_deg), math.radians(self.cfg.ksi_angle_deg))
+            alpha.unsqueeze(0).expand_as(t),
+            beta,
+            math.radians(self.cfg.theta_angle_deg),
+            math.radians(self.cfg.ksi_angle_deg),
+        )
         # 마운트 회전 적용 (base 클래스 _initialize_rays_impl 이 초기 패턴에 하던 것과 동일)
         dirs = quat_apply(self._l1_offset_quat.expand(n_env, self.num_rays, 4), dirs)
         self.ray_directions[env_ids] = dirs

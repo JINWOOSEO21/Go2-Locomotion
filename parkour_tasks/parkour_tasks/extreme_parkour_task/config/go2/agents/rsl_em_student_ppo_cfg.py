@@ -1,11 +1,12 @@
+from isaaclab.utils import configclass
+
 from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import (
-    ParkourRslRlEMDistillationCfg,
     ParkourRslRlDistillationAlgorithmCfg,
+    ParkourRslRlEMDistillationCfg,
 )
 from parkour_tasks.extreme_parkour_task.config.go2.agents.rsl_student_ppo_cfg import (
     UnitreeGo2ParkourStudentPPORunnerCfg,
 )
-from isaaclab.utils import configclass
 
 
 @configclass
@@ -20,9 +21,10 @@ class UnitreeGo2ParkourEMStudentPPORunnerCfg(UnitreeGo2ParkourStudentPPORunnerCf
       상속한다 (load_run / run_subdir 상속). 최상위에 승격된 checkpoint 가 없으면
       train/play 가 최근 하위 run 폴더로 내려가 찾는다 (checkpoint_utils 참고).
     """
+
     depth_encoder = None
     em_distillation = ParkourRslRlEMDistillationCfg(
-        learning_rate=1.e-3,
+        learning_rate=1.0e-3,
         num_steps_per_env=24 * 5,
     )
     # distillation 출발점(teacher). depth student cfg 는 model_14999.pt 를 가리키지만
@@ -38,7 +40,7 @@ class UnitreeGo2ParkourEMStudentPPORunnerCfg(UnitreeGo2ParkourStudentPPORunnerCf
         entropy_coef=0.01,
         num_learning_epochs=5,
         num_mini_batches=4,
-        learning_rate=2.e-4,
+        learning_rate=2.0e-4,
         schedule="adaptive",
         gamma=0.99,
         lam=0.95,

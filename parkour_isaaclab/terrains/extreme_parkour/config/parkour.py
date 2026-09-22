@@ -1,12 +1,12 @@
+from parkour_isaaclab.terrains.extreme_parkour import *
 from parkour_isaaclab.terrains.parkour_terrain_generator_cfg import ParkourTerrainGeneratorCfg
-from parkour_isaaclab.terrains.extreme_parkour import * 
 
 EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
     size=(16.0, 4.0),
     border_width=20.0,
     num_rows=10,
     num_cols=40,
-    horizontal_scale=0.08, ## original scale is 0.05, But Computing issue in IsaacLab see this issue in https://github.com/isaac-sim/IsaacLab/issues/2187
+    horizontal_scale=0.08,  ## original scale is 0.05, But Computing issue in IsaacLab see this issue in https://github.com/isaac-sim/IsaacLab/issues/2187
     vertical_scale=0.005,
     # 높이맵을 메쉬로 바꿀 때 '한 픽셀 사이 단차를 수직 벽으로 세울지' 를 정하는
     # 기울기(rise/run) 기준. horizontal_scale 0.08 에서는 단차 0.12m 초과분만
@@ -24,50 +24,50 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
     slope_threshold=1.5,
     difficulty_range=(0.0, 1.0),
     use_cache=False,
-    curriculum= True,
+    curriculum=True,
     sub_terrains={
         "parkour_gap": ExtremeParkourGapTerrainCfg(
-                        proportion=0.2,
-                        apply_roughness=True,
-                        x_range = (0.8, 1.5),
-                        half_valid_width = (0.6, 1.2),
-                        gap_size = '0.1 + 0.7*difficulty'
-                        ),
+            proportion=0.2,
+            apply_roughness=True,
+            x_range=(0.8, 1.5),
+            half_valid_width=(0.6, 1.2),
+            gap_size="0.1 + 0.7*difficulty",
+        ),
         "parkour_hurdle": ExtremeParkourHurdleTerrainCfg(
-                        proportion=0.2,
-                        apply_roughness=True,
-                        x_range = (1.2, 2.2),
-                        half_valid_width = (0.4,0.8),
-                        hurdle_height_range= '0.1+0.1*difficulty, 0.15+0.25*difficulty'
-                        ),
+            proportion=0.2,
+            apply_roughness=True,
+            x_range=(1.2, 2.2),
+            half_valid_width=(0.4, 0.8),
+            hurdle_height_range="0.1+0.1*difficulty, 0.15+0.25*difficulty",
+        ),
         "parkour_flat": ExtremeParkourHurdleTerrainCfg(
-                        proportion=0.2,
-                        apply_roughness=True,
-                        apply_flat=True,
-                        x_range = (1.2, 2.2),
-                        half_valid_width = (0.4,0.8),
-                        hurdle_height_range= '0.1+0.1*difficulty, 0.15+0.15*difficulty'
-                        ),
+            proportion=0.2,
+            apply_roughness=True,
+            apply_flat=True,
+            x_range=(1.2, 2.2),
+            half_valid_width=(0.4, 0.8),
+            hurdle_height_range="0.1+0.1*difficulty, 0.15+0.15*difficulty",
+        ),
         "parkour_step": ExtremeParkourStepTerrainCfg(
-                        proportion=0.2,
-                        apply_roughness=True,
-                        x_range = (0.3,1.5),
-                        half_valid_width = (0.5, 1),
-                        step_height = '0.1 + 0.35*difficulty'
-                        ),
+            proportion=0.2,
+            apply_roughness=True,
+            x_range=(0.3, 1.5),
+            half_valid_width=(0.5, 1),
+            step_height="0.1 + 0.35*difficulty",
+        ),
         "parkour": ExtremeParkourTerrainCfg(
-                        proportion=0.2,
-                        apply_roughness=True,
-                        x_range  = '-0.1, 0.1+0.3*difficulty',
-                        y_range  = '0.2, 0.3+0.1*difficulty',
-                        stone_len  = '0.9 - 0.3*difficulty, 1 - 0.2*difficulty',
-                        incline_height = '0.25*difficulty',
-                        last_incline_height = 'incline_height + 0.1 - 0.1*difficulty'
-                        ),
+            proportion=0.2,
+            apply_roughness=True,
+            x_range="-0.1, 0.1+0.3*difficulty",
+            y_range="0.2, 0.3+0.1*difficulty",
+            stone_len="0.9 - 0.3*difficulty, 1 - 0.2*difficulty",
+            incline_height="0.25*difficulty",
+            last_incline_height="incline_height + 0.1 - 0.1*difficulty",
+        ),
         "parkour_demo": ExtremeParkourDemoTerrainCfg(
-                        proportion=0.0,
-                        apply_roughness=True,
-                        ),
+            proportion=0.0,
+            apply_roughness=True,
+        ),
         # IsaacLab HfInvertedPyramidStairsTerrainCfg 를 parkour 규약에 맞춘 지형.
         # 여기의 proportion 은 기본값일 뿐이고, 실제 분포는 각 env cfg 가
         # apply_terrain_preset() 으로 덮어쓴다. 학습에 넣으려면 TERRAIN_PRESETS 의
@@ -77,15 +77,15 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
         # step_depth 를 (pyramid_len - apex_width) / (2*4) = (8.0-1.6)/8 = 0.8 로 맞추면
         # x 도 같은 4칸에서 닫혀 바닥이 1.6m 정사각형인 피라미드가 된다.
         "parkour_pyramid_stairs": ExtremeParkourInvertedPyramidStairsTerrainCfg(
-                        proportion=0.0,
-                        apply_roughness=True,
-                        step_height_range=(0.05, 0.20),
-                        step_width=0.3,
-                        step_depth=0.8,
-                        apex_width=1.6,
-                        pyramid_len=8.0,
-                        run_up_len=1.5,
-                        ),
+            proportion=0.0,
+            apply_roughness=True,
+            step_height_range=(0.05, 0.20),
+            step_width=0.3,
+            step_depth=0.8,
+            apex_width=1.6,
+            pyramid_len=8.0,
+            run_up_len=1.5,
+        ),
         # 같은 함수의 inverted=False 판. 구덩이로 내려가는 대신 계단을 올라갔다
         # 내려온다. 올라가는 쪽이 더 힘드므로 계단 한 칸을 조금 낮게 잡았다
         # (난이도 1.0 에서 4칸 x 0.16 = 0.64m 상승).
@@ -93,27 +93,27 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
         # 단차가 generator 의 slope_threshold 기준(0.08 스케일에서 0.12m)보다 낮은
         # 난이도 구간에서는 계단 면이 수직으로 서지 않고 x_edge_mask 도 안 생긴다.
         "parkour_pyramid_stairs_up": ExtremeParkourPyramidStairsTerrainCfg(
-                        proportion=0.0,
-                        apply_roughness=True,
-                        step_height_range=(0.05, 0.16),
-                        step_width=0.3,
-                        step_depth=0.8,
-                        apex_width=1.6,
-                        pyramid_len=8.0,
-                        run_up_len=1.5,
-                        ),
+            proportion=0.0,
+            apply_roughness=True,
+            step_height_range=(0.05, 0.16),
+            step_width=0.3,
+            step_depth=0.8,
+            apex_width=1.6,
+            pyramid_len=8.0,
+            run_up_len=1.5,
+        ),
         # IsaacLab HfDiscreteObstaclesTerrainCfg 를 parkour 규약에 맞춘 지형.
         # x_range 는 goal 간격이다. 7구간 * 최대 2.5m + 플랫폼 2.5m = 20m 로 24m 타일에 들어간다.
         "parkour_discrete_obstacles": ExtremeParkourDiscreteObstaclesTerrainCfg(
-                        proportion=0.0,
-                        apply_roughness=True,
-                        obstacle_height_mode="choice",
-                        obstacle_width_range=(0.4, 1.2),
-                        obstacle_height_range=(0.05, 0.20),
-                        num_obstacles=40,
-                        goal_clear_width=0.6,
-                        x_range=(1.5, 2.5),
-                        ),
+            proportion=0.0,
+            apply_roughness=True,
+            obstacle_height_mode="choice",
+            obstacle_width_range=(0.4, 1.2),
+            obstacle_height_range=(0.05, 0.20),
+            num_obstacles=40,
+            goal_clear_width=0.6,
+            x_range=(1.5, 2.5),
+        ),
         # IsaacLab MeshRandomGridTerrainCfg 를 parkour 규약에 맞춘 지형.
         # apply_roughness 는 끈다. 칸 윗면이 평평한 것이 이 지형의 성격인데 노이즈를
         # 덧씌우면 그 평평함이 사라진다.
@@ -123,23 +123,23 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
         # 거치므로 칸 경계 높이차가 generator 의 slope_threshold 기준(0.08 스케일에서
         # 0.12m)을 넘지 못해 수직 벽도 x_edge_mask 도 생기지 않는다.
         "parkour_random_grid": ExtremeParkourRandomGridTerrainCfg(
-                        proportion=0.0,
-                        apply_roughness=False,
-                        grid_width=0.5,
-                        grid_height_range=(0.02, 0.10),
-                        x_range=(1.5, 2.5),
-                        ),
+            proportion=0.0,
+            apply_roughness=False,
+            grid_width=0.5,
+            grid_height_range=(0.02, 0.10),
+            x_range=(1.5, 2.5),
+        ),
         # 사다리꼴 경사로: 오르막(10~37도) - 평지 - 내리막. 오르막/내리막 기울기 동일.
         # 10행 커리큘럼에서 각도가 정확히 10,13,...,37도가 되도록 slope_angle 을 잡았다.
         # 평지 길이/높이는 랜덤 (완만한 각도에서 넘치면 각도 유지, 높이만 clamp).
         "parkour_trapezoid_ramp": ExtremeParkourTrapezoidRampTerrainCfg(
-                        proportion=0.0,
-                        apply_roughness=True,
-                        slope_angle='10 + 27*difficulty',
-                        course_width_range=(2.0, 4.0),
-                        plateau_len_range=(1.5, 3.0),
-                        plateau_height_range=(0.4, 0.8),
-                        ),
+            proportion=0.0,
+            apply_roughness=True,
+            slope_angle="10 + 27*difficulty",
+            course_width_range=(2.0, 4.0),
+            plateau_len_range=(1.5, 3.0),
+            plateau_height_range=(0.4, 0.8),
+        ),
         # 사다리꼴 계단: 계단 오르막 - 평지 - 계단 내리막 (단 수는 타일마다 3~7개 랜덤).
         # 단차는 10행 커리큘럼에서 정확히 5,7,...,23cm. 디딤판 깊이는 step 지형처럼
         # 계단마다 x_range 에서 랜덤.
@@ -149,15 +149,14 @@ EXTREME_PARKOUR_TERRAINS_CFG = ParkourTerrainGeneratorCfg(
         # reward_feet_edge 가 terrain_levels > 3 에서만 켜지므로 실제 리워드에는
         # 영향이 없다 (실측 edge 픽셀: row3=89, row4=232, row6=543).
         "parkour_trapezoid_stairs": ExtremeParkourTrapezoidStairsTerrainCfg(
-                        proportion=0.0,
-                        apply_roughness=True,
-                        step_height='0.05 + 0.18*difficulty',
-                        num_steps_range=(3, 7),
-                        x_range=(0.3, 0.8),
-                        course_width_range=(2.0, 4.0),
-                        plateau_len_range=(1.5, 3.0),
-                        ),
-
+            proportion=0.0,
+            apply_roughness=True,
+            step_height="0.05 + 0.18*difficulty",
+            num_steps_range=(3, 7),
+            x_range=(0.3, 0.8),
+            course_width_range=(2.0, 4.0),
+            plateau_len_range=(1.5, 3.0),
+        ),
     },
 )
 
@@ -248,8 +247,7 @@ def apply_terrain_preset(
     unknown = set(weights) - set(generator_cfg.sub_terrains)
     if unknown:
         raise KeyError(
-            f"sub_terrains 에 정의되지 않은 지형: {sorted(unknown)} "
-            f"(사용 가능: {sorted(generator_cfg.sub_terrains)})"
+            f"sub_terrains 에 정의되지 않은 지형: {sorted(unknown)} (사용 가능: {sorted(generator_cfg.sub_terrains)})"
         )
     for key, sub_terrain in generator_cfg.sub_terrains.items():
         sub_terrain.proportion = weights.get(key, 0.0)

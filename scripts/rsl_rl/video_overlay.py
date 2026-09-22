@@ -5,11 +5,11 @@
 
 """녹화 프레임에 붙이는 오버레이 유틸.
 
-play.py --multicam 과 demo.py 가 --with_depth 로 똑같은 depth 패널을 그리도록
+play.py --multicam --panels 와 demo.py --with_depth 가 같은 depth 패널을 그리도록
 구현을 여기 한 곳에만 둔다. 양쪽에 복사해 두면 컬러맵이나 정규화 규칙이
 갈라져서, 같은 정책을 찍은 영상인데 depth 가 달라 보이게 된다.
 
---with_scandots 의 height-scan 패널도 같은 이유로 여기 둔다.
+GT 및 Estimated height-scan 패널도 같은 이유로 여기 둔다.
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ def scandots_to_panel(
 def label_panel(panel: np.ndarray, text: str) -> np.ndarray:
     """패널 왼쪽 상단에 라벨을 그린다.
 
-    GT/Measured 처럼 나란히 붙는 패널을 구분하는 용도 (play.py --with_scandots,
+    GT/Estimated 처럼 나란히 붙는 패널을 구분하는 용도 (play.py --panels,
     EM student). 검은 테두리 + 흰 글씨라 TURBO 어느 색 위에서도 읽힌다.
     """
     scale = max(0.4, panel.shape[0] / 540 * 0.6)

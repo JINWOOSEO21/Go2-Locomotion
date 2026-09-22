@@ -1,13 +1,14 @@
-
 from __future__ import annotations
 
-import torch
 from typing import TYPE_CHECKING
+
 import omni.kit.app
+import torch
 from isaaclab.managers import RewardManager
 
 if TYPE_CHECKING:
     from parkour_isaaclab.envs import ParkourManagerBasedRLEnv
+
 
 class ParkourRewardManager(RewardManager):
     _env: ParkourManagerBasedRLEnv
@@ -17,7 +18,7 @@ class ParkourRewardManager(RewardManager):
 
     def compute(self, dt: float) -> torch.Tensor:
         """
-        Same to Legged Gym 
+        Same to Legged Gym
         """
         # reset computation
         self._reward_buf[:] = 0.0
@@ -35,5 +36,5 @@ class ParkourRewardManager(RewardManager):
             self._episode_sums[name] += value
             # Update current reward for this step.
             self._step_reward[:, term_idx] = value / dt
-        self._reward_buf[:] = torch.clip(self._reward_buf[:], min=0.)
+        self._reward_buf[:] = torch.clip(self._reward_buf[:], min=0.0)
         return self._reward_buf

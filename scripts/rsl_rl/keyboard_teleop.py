@@ -229,7 +229,7 @@ class CarbKeyboard:
     }
     # 누르고 있으면 반복 입력되는 키. 방향 조절만 해당한다.
     _REPEAT_KEYS = frozenset({"a", "d", "left", "right"})
-    _REPEAT_DELAY = 0.35   # 첫 반복까지 기다리는 시간(초)
+    _REPEAT_DELAY = 0.35  # 첫 반복까지 기다리는 시간(초)
     _REPEAT_PERIOD = 0.06  # 그 뒤 반복 간격(초)
 
     def __init__(self, state: KeyboardTeleopState):

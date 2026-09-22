@@ -1,10 +1,15 @@
-from isaaclab_rl.rsl_rl.exporter import _TorchPolicyExporter, _OnnxPolicyExporter
-import os, torch, copy
+import copy
+import os
 from typing import Any
+
+import torch
+from isaaclab_rl.rsl_rl.exporter import _OnnxPolicyExporter, _TorchPolicyExporter
+
 
 def export_teacher_policy_as_jit(policy: object, normalizer: object | None, path: str, filename="policy.pt"):
     policy_exporter = _ParkourTeacherTorchPolicyExporter(policy, normalizer)
     policy_exporter.export(path, filename)
+
 
 def export_teacher_policy_as_onnx(
     policy: object, path: str, normalizer: object | None = None, filename="policy.onnx", verbose=False
@@ -16,28 +21,24 @@ def export_teacher_policy_as_onnx(
 
 
 def export_deploy_policy_as_jit(
-    policy: object, 
-    estimator: object, 
-    depth_encoder: object, 
-    normalizer: object | None, 
-    path: str, 
-    filename="policy.pt"
-    ):
+    policy: object, estimator: object, depth_encoder: object, normalizer: object | None, path: str, filename="policy.pt"
+):
     policy_exporter = _ParkourDeployTorchPolicyExporter(policy, estimator, normalizer)
     policy_exporter.export(path, filename)
 
     depth_exporter = _ParkourDeployTorchDepthEncoderExporter(depth_encoder)
-    depth_exporter.export(path, 'depth_latest.pt')
+    depth_exporter.export(path, "depth_latest.pt")
+
 
 def export_deploy_policy_as_onnx(
-    policy: object, 
-    estimator: object, 
-    depth_encoder: object, 
+    policy: object,
+    estimator: object,
+    depth_encoder: object,
     agent_cfg: Any,
-    path: str, 
-    normalizer: object | None = None, 
-    filename="policy.onnx", 
-    verbose=False
+    path: str,
+    normalizer: object | None = None,
+    filename="policy.onnx",
+    verbose=False,
 ):
     if not os.path.exists(path):
         os.makedirs(path, exist_ok=True)
@@ -45,7 +46,8 @@ def export_deploy_policy_as_onnx(
     policy_exporter.export(path, filename)
 
     depth_exporter = _ParkourDeployOnnxDepthEncoderExporter(depth_encoder, agent_cfg, verbose)
-    depth_exporter.export(path, 'depth_latest.onnx')
+    depth_exporter.export(path, "depth_latest.onnx")
+
 
 class _ParkourTeacherTorchPolicyExporter(_TorchPolicyExporter):
     def __init__(self, policy, normalizer=None):
@@ -58,10 +60,11 @@ class _ParkourTeacherTorchPolicyExporter(_TorchPolicyExporter):
         self.cell_state[:] = c
         x = x.squeeze(0)
         return self.actor(x, hist_encoding=True)
-    
+
     def forward(self, x):
         return self.actor(self.normalizer(x), hist_encoding=True)
-    
+
+
 class _ParkourTeacherOnnxPolicyExporter(_OnnxPolicyExporter):
     def __init__(self, policy, normalizer=None, verbose=False):
         super().__init__(policy, normalizer, verbose)
@@ -70,10 +73,10 @@ class _ParkourTeacherOnnxPolicyExporter(_OnnxPolicyExporter):
         x_in = self.normalizer(x_in)
         x, (h, c) = self.rnn(x_in.unsqueeze(0), (h_in, c_in))
         x = x.squeeze(0)
-        return self.actor(x, hist_encoding=True ), h, c
+        return self.actor(x, hist_encoding=True), h, c
 
     def forward(self, x):
-        return self.actor(self.normalizer(x), hist_encoding=True )
+        return self.actor(self.normalizer(x), hist_encoding=True)
 
     def export(self, path, filename):
         self.to("cpu")
@@ -109,7 +112,7 @@ class _ParkourTeacherOnnxPolicyExporter(_OnnxPolicyExporter):
 
 
 class _ParkourDeployTorchPolicyExporter(torch.nn.Module):
-    def __init__(self, policy, estimator ,normalizer=None):
+    def __init__(self, policy, estimator, normalizer=None):
         super().__init__()
         # copy policy parameters
         self.actor = copy.deepcopy(policy)
@@ -117,7 +120,7 @@ class _ParkourDeployTorchPolicyExporter(torch.nn.Module):
         self._num_prop = policy.num_prop
         self._num_scan = policy.num_scan
         self._num_priv_explicit = policy.num_priv_explicit
-        self._start = self._num_prop + self._num_scan 
+        self._start = self._num_prop + self._num_scan
         self._end = self._start + self._num_priv_explicit
         if normalizer:
             self.normalizer = copy.deepcopy(normalizer)
@@ -125,10 +128,9 @@ class _ParkourDeployTorchPolicyExporter(torch.nn.Module):
             self.normalizer = torch.nn.Identity()
 
     def forward(self, x, scandots_latent):
-        x[:,self._start : self._end] \
-            = self.estimator(x[:,:self._num_prop])
-        return self.actor(self.normalizer(x), hist_encoding=True , scandots_latent = scandots_latent)
-    
+        x[:, self._start : self._end] = self.estimator(x[:, : self._num_prop])
+        return self.actor(self.normalizer(x), hist_encoding=True, scandots_latent=scandots_latent)
+
     def export(self, path, filename):
         os.makedirs(path, exist_ok=True)
         path = os.path.join(path, filename)
@@ -136,8 +138,9 @@ class _ParkourDeployTorchPolicyExporter(torch.nn.Module):
         traced_script_module = torch.jit.script(self)
         traced_script_module.save(path)
 
+
 class _ParkourDeployOnnxPolicyExporter(torch.nn.Module):
-    def __init__(self, policy, estimator ,normalizer=None, verbose=False):
+    def __init__(self, policy, estimator, normalizer=None, verbose=False):
         super().__init__()
         self.verbose = verbose
         # copy policy parameters
@@ -155,9 +158,8 @@ class _ParkourDeployOnnxPolicyExporter(torch.nn.Module):
             self.normalizer = torch.nn.Identity()
 
     def forward(self, x, scandots_latent):
-        x[:,self._start : self._end] \
-            = self.estimator(x[:,:self._num_prop])
-        return self.actor(self.normalizer(x), hist_encoding=True, scandots_latent = scandots_latent )
+        x[:, self._start : self._end] = self.estimator(x[:, : self._num_prop])
+        return self.actor(self.normalizer(x), hist_encoding=True, scandots_latent=scandots_latent)
 
     def export(self, path, filename):
         self.to("cpu")
@@ -170,10 +172,11 @@ class _ParkourDeployOnnxPolicyExporter(torch.nn.Module):
             export_params=True,
             opset_version=11,
             verbose=self.verbose,
-            input_names=["obs","scandots_latent"],
+            input_names=["obs", "scandots_latent"],
             output_names=["actions"],
             dynamic_axes={},
         )
+
 
 class _ParkourDeployTorchDepthEncoderExporter(torch.nn.Module):
     def __init__(self, depth_encoder):
@@ -183,13 +186,14 @@ class _ParkourDeployTorchDepthEncoderExporter(torch.nn.Module):
 
     def forward(self, depth_image, proprioception):
         return self.depth_encoder(depth_image, proprioception)
-    
+
     def export(self, path, filename):
         os.makedirs(path, exist_ok=True)
         path = os.path.join(path, filename)
         self.to("cpu")
         traced_script_module = torch.jit.script(self)
         traced_script_module.save(path)
+
 
 class _ParkourDeployOnnxDepthEncoderExporter(torch.nn.Module):
     def __init__(self, depth_encoder, agent_cfg, verbose=False):
@@ -199,7 +203,7 @@ class _ParkourDeployOnnxDepthEncoderExporter(torch.nn.Module):
         self.depth_encoder = copy.deepcopy(depth_encoder)
         self._image_size = agent_cfg.depth_encoder.depth_shape
         self._num_prop = agent_cfg.estimator.num_prop
-        
+
     def forward(self, depth_image, proprioception):
         return self.depth_encoder(depth_image, proprioception)
 
@@ -214,8 +218,7 @@ class _ParkourDeployOnnxDepthEncoderExporter(torch.nn.Module):
             export_params=True,
             opset_version=11,
             verbose=self.verbose,
-            input_names=["depth_image","proprioception"],
+            input_names=["depth_image", "proprioception"],
             output_names=["depth_latent"],
             dynamic_axes={},
         )
-

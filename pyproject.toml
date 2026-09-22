@@ -1,0 +1,58 @@
+[tool.ruff]
+# Match parkour_tasks/setup.py's supported Python floor.
+target-version = "py310"
+line-length = 120
+src = [".", "parkour_tasks"]
+# Protect artifacts and the independently maintained submodule, including when
+# their files are explicitly passed to Ruff by an editor or command line.
+extend-exclude = [
+    "elevation_mapping_cupy",
+    "logs",
+    "outputs",
+    ".omx",
+    ".omc",
+    ".claude",
+]
+force-exclude = true
+unsafe-fixes = false
+
+[tool.ruff.lint]
+# Core errors, Pyflakes, and import sorting. Formatting owns layout; do not
+# enable E501 or rules that conflict with the formatter.
+select = ["E4", "E7", "E9", "F", "I"]
+# Imports can register Gym tasks or expose APIs through dynamic lookups.
+# Report unused imports, but require a human review before deleting them.
+unfixable = ["F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["parkour_isaaclab", "parkour_tasks", "scripts"]
+
+[tool.ruff.lint.per-file-ignores]
+# Isaac Sim must launch before simulator-dependent modules are imported.
+"scripts/rsl_rl/{train,play,evaluation,eval_fixed_difficulty,demo}.py" = ["E402"]
+"list_envs.py" = ["E402"]
+"parkour_test/{test_camera,test_terrain_generator}.py" = ["E402"]
+"deploy/tools/{dump_em_geometry,dump_isaaclab_joint_order,export_terrain}.py" = ["E402"]
+
+# Existing public re-export modules. Keep wildcard diagnostics enabled in
+# implementation/config files so explicit-import cleanup remains visible.
+"scripts/__init__.py" = ["F401", "F403"]
+"scripts/rsl_rl/__init__.py" = ["F401", "F403"]
+"scripts/rsl_rl/modules/__init__.py" = ["F401", "F403"]
+"scripts/rsl_rl/modules/feature_extractors/__init__.py" = ["F401", "F403"]
+"parkour_isaaclab/{actuators,envs,terrains}/__init__.py" = ["F401", "F403"]
+"parkour_isaaclab/envs/mdp/__init__.py" = ["F401", "F403"]
+"parkour_isaaclab/envs/mdp/parkour_actions/__init__.py" = ["F401", "F403"]
+"parkour_isaaclab/terrains/extreme_parkour/config/__init__.py" = ["F401", "F403"]
+"parkour_isaaclab/{managers,sensors}/__init__.py" = ["F401"]
+"parkour_isaaclab/terrains/extreme_parkour/__init__.py" = ["F401"]
+"parkour_isaaclab/envs/mdp/{parkour_commands,parkours}/__init__.py" = ["F401"]
+"parkour_test/utils/__init__.py" = ["F401"]
+# Importing go2 registers the tasks.
+"parkour_tasks/parkour_tasks/extreme_parkour_task/__init__.py" = ["F401"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

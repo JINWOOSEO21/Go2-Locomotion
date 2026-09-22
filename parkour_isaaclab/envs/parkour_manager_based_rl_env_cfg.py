@@ -5,10 +5,11 @@
 
 from dataclasses import MISSING
 
+from isaaclab.envs.manager_based_rl_env_cfg import ManagerBasedRLEnvCfg
 from isaaclab.utils import configclass
 
-from isaaclab.envs.manager_based_rl_env_cfg import ManagerBasedRLEnvCfg
 from parkour_isaaclab.envs.parkour_ui import ParkourManagerBasedRLEnvWindow
+
 
 @configclass
 class ParkourManagerBasedRLEnvCfg(ManagerBasedRLEnvCfg):

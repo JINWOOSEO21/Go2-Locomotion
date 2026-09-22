@@ -50,9 +50,7 @@ from isaaclab.app import AppLauncher
 # local imports
 import cli_args  # isort: skip
 
-parser = argparse.ArgumentParser(
-    description="Evaluate teacher checkpoints on a fixed-difficulty terrain."
-)
+parser = argparse.ArgumentParser(description="Evaluate teacher checkpoints on a fixed-difficulty terrain.")
 parser.add_argument(
     "--task",
     type=str,
@@ -113,12 +111,12 @@ import subprocess
 import time
 
 import gymnasium as gym
+import isaaclab_tasks  # noqa: F401
 import numpy as np
 import torch
-from tqdm import tqdm
-
 from isaaclab.utils.math import euler_xyz_from_quat, wrap_to_pi
 from isaaclab_tasks.utils import parse_env_cfg
+from tqdm import tqdm
 
 from parkour_isaaclab.terrains.extreme_parkour.config.parkour import apply_terrain_preset
 from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import (
@@ -126,8 +124,6 @@ from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import 
 )
 from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
 from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
-
-import isaaclab_tasks  # noqa: F401
 
 
 def select_checkpoints(checkpoint_dir: str, iterations: str | None, step: int) -> list[tuple[int, str]]:
@@ -307,9 +303,7 @@ def main():
     os.makedirs(args_cli.output_dir, exist_ok=True)
     seed = args_cli.seed if args_cli.seed is not None else 0
 
-    checkpoints = select_checkpoints(
-        args_cli.checkpoint_dir, args_cli.iterations, args_cli.iteration_step
-    )
+    checkpoints = select_checkpoints(args_cli.checkpoint_dir, args_cli.iterations, args_cli.iteration_step)
     if args_cli.calibrate:
         checkpoints = checkpoints[:1]
     print(f"[INFO] 평가할 체크포인트 {len(checkpoints)} 개: {[it for it, _ in checkpoints]}")
@@ -334,12 +328,13 @@ def main():
 
     active_terrains = [k for k, v in generator.sub_terrains.items() if v.proportion > 0]
     terrain_params = {
-        name: resolve_difficulty_params(generator.sub_terrains[name], args_cli.difficulty)
-        for name in active_terrains
+        name: resolve_difficulty_params(generator.sub_terrains[name], args_cli.difficulty) for name in active_terrains
     }
     terrain_params = {k: v for k, v in terrain_params.items() if v}
-    print(f"[INFO] 난이도 {args_cli.difficulty} 고정, 지형 {active_terrains}, "
-          f"{args_cli.num_rows}x{args_cli.num_cols} 타일, seed {seed}")
+    print(
+        f"[INFO] 난이도 {args_cli.difficulty} 고정, 지형 {active_terrains}, "
+        f"{args_cli.num_rows}x{args_cli.num_cols} 타일, seed {seed}"
+    )
     for name, params in terrain_params.items():
         print(f"[INFO]   {name}: {params}")
 
@@ -363,9 +358,19 @@ def main():
     recorder.seed = seed
 
     fieldnames = [
-        "iteration", "seed", "env_id", "terrain_name", "terrain_level",
-        "steps", "duration_s", "episode_length_buf", "success", "term_reason",
-        "goal_idx_final", "dist_from_start", "rew_total_raw_per_s",
+        "iteration",
+        "seed",
+        "env_id",
+        "terrain_name",
+        "terrain_level",
+        "steps",
+        "duration_s",
+        "episode_length_buf",
+        "success",
+        "term_reason",
+        "goal_idx_final",
+        "dist_from_start",
+        "rew_total_raw_per_s",
     ] + [f"raw_{n}" for n in TERM_NAMES]
 
     episodes_path = os.path.join(args_cli.output_dir, "episodes.csv")
@@ -431,7 +436,7 @@ def main():
         for _ in tqdm(range(args_cli.steps), desc=f"iter {iteration}", leave=False, mininterval=30.0):
             recorder.accumulated = False
             with torch.inference_mode():
-                obs[:, num_prop + num_scan: num_prop + num_scan + num_priv_explicit] = estimator.inference(
+                obs[:, num_prop + num_scan : num_prop + num_scan + num_priv_explicit] = estimator.inference(
                     obs[:, :num_prop]
                 )
                 actions = policy(obs, hist_encoding=True)
@@ -449,23 +454,25 @@ def main():
         if n_ep:
             rew = np.array([r["rew_total_raw_per_s"] for r in recorder.rows])
             ok = np.array([r["success"] for r in recorder.rows], dtype=bool)
-            msg = (f"[INFO] iter {iteration}: {n_ep} 에피소드, {elapsed/60:.1f} 분, "
-                   f"완주율 {ok.mean()*100:.1f}%, reward(초당, clip 전) 전체 {rew.mean():.4f}")
+            msg = (
+                f"[INFO] iter {iteration}: {n_ep} 에피소드, {elapsed / 60:.1f} 분, "
+                f"완주율 {ok.mean() * 100:.1f}%, reward(초당, clip 전) 전체 {rew.mean():.4f}"
+            )
             if ok.any():
                 msg += f", 완주만 {rew[ok].mean():.4f}"
             log(msg)
         else:
-            log(f"[WARN] iter {iteration}: 완료된 에피소드가 없다 ({elapsed/60:.1f} 분)")
+            log(f"[WARN] iter {iteration}: 완료된 에피소드가 없다 ({elapsed / 60:.1f} 분)")
 
     recorder.close()
     env.close()
 
     mean_dur = float(np.mean(durations)) if durations else 0.0
     log("\n[SUMMARY] ------------------------------------------------")
-    log(f"체크포인트당 rollout 시간: 평균 {mean_dur/60:.2f} 분 ({args_cli.steps} step)")
+    log(f"체크포인트당 rollout 시간: 평균 {mean_dur / 60:.2f} 분 ({args_cli.steps} step)")
     if args_cli.calibrate:
         total = select_checkpoints(args_cli.checkpoint_dir, args_cli.iterations, args_cli.iteration_step)
-        log(f"전체 {len(total)} 개 예상 rollout 시간: {mean_dur*len(total)/3600:.2f} 시간 (기동 시간 별도)")
+        log(f"전체 {len(total)} 개 예상 rollout 시간: {mean_dur * len(total) / 3600:.2f} 시간 (기동 시간 별도)")
     log(f"결과: {episodes_path}")
 
 

@@ -5,21 +5,21 @@
 
 from __future__ import annotations
 
-import torch
 from typing import TYPE_CHECKING
 
-import omni.log
-
 import isaaclab.sim as sim_utils
-from .parkour_terrain_generator import ParkourTerrainGenerator
+import numpy as np
+import omni.log
+import torch
 from isaaclab.terrains.terrain_importer import TerrainImporter
-import numpy as np   
+
+from .parkour_terrain_generator import ParkourTerrainGenerator
 
 if TYPE_CHECKING:
     from isaaclab.terrains.terrain_importer_cfg import TerrainImporterCfg
 
-class ParkourTerrainImporter(TerrainImporter):
 
+class ParkourTerrainImporter(TerrainImporter):
     terrain_prim_paths: list[str]
 
     terrain_origins: torch.Tensor | None
@@ -47,16 +47,17 @@ class ParkourTerrainImporter(TerrainImporter):
             if self.cfg.terrain_generator is None:
                 raise ValueError("Input terrain type is 'generator' but no value provided for 'terrain_generator'.")
             # generate the terrain
-            self._terrain_generator_class = ParkourTerrainGenerator(cfg=self.cfg.terrain_generator, 
-                                                                    device=self.device,
-                                                                    )
+            self._terrain_generator_class = ParkourTerrainGenerator(
+                cfg=self.cfg.terrain_generator,
+                device=self.device,
+            )
             self.import_mesh("terrain", self._terrain_generator_class.terrain_mesh)
             # configure the terrain origins based on the terrain generator
             self.configure_env_origins(self._terrain_generator_class.terrain_origins)
             # refer to the flat patches
             self._terrain_flat_patches = self._terrain_generator_class.flat_patches
         else:
-            TypeError(f'Parkour Terrain type only support generator, not {self.cfg.terrain_type}')
+            TypeError(f"Parkour Terrain type only support generator, not {self.cfg.terrain_type}")
         # set initial state of debug visualization
         self.set_debug_vis(self.cfg.debug_vis)
 

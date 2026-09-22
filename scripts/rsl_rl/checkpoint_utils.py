@@ -30,11 +30,7 @@ def get_checkpoint_path_with_fallback(log_root_path: str, run_dir: str, checkpoi
         pass
 
     # run 폴더 해석은 get_checkpoint_path 와 같은 규칙: 정규식 매칭, 알파벳순 마지막.
-    runs = sorted(
-        entry.path
-        for entry in os.scandir(log_root_path)
-        if entry.is_dir() and re.match(run_dir, entry.name)
-    )
+    runs = sorted(entry.path for entry in os.scandir(log_root_path) if entry.is_dir() and re.match(run_dir, entry.name))
     if not runs:
         raise ValueError(f"No runs present in the directory: '{log_root_path}' match: '{run_dir}'.")
     run_path = runs[-1]
@@ -48,9 +44,7 @@ def get_checkpoint_path_with_fallback(log_root_path: str, run_dir: str, checkpoi
         and any(re.match(pattern, f) for f in os.listdir(entry.path))
     ]
     if not candidates:
-        raise ValueError(
-            f"No checkpoints in the directory: '{run_path}' (or its sub-runs) match '{pattern}'."
-        )
+        raise ValueError(f"No checkpoints in the directory: '{run_path}' (or its sub-runs) match '{pattern}'.")
     latest = max(candidates, key=lambda entry: entry.stat().st_mtime)
     resume_path = get_checkpoint_path(run_path, re.escape(latest.name), pattern)
     print(f"[INFO] '{run_path}' 바로 아래에 checkpoint 가 없어 최근 하위 run 에서 찾았다: {resume_path}")

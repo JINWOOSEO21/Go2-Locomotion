@@ -1,19 +1,22 @@
-
 from __future__ import annotations
+
+from copy import deepcopy
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from .feature_extractors import DepthOnlyFCBackbone58x87, RecurrentDepthBackbone
-from .actor_critic_with_encoder import ActorCriticRMA
-from copy import deepcopy  
 
-class DistillationWithExtractor():
+from .actor_critic_with_encoder import ActorCriticRMA
+from .feature_extractors import DepthOnlyFCBackbone58x87, RecurrentDepthBackbone
+
+
+class DistillationWithExtractor:
     policy: ActorCriticRMA
+
     def __init__(
         self,
         policy,
-        estimator, 
+        estimator,
         estimator_paras,
         learning_rate,
         depth_encoder_cfg,
@@ -21,7 +24,7 @@ class DistillationWithExtractor():
         device,
         max_grad_norm=1.0,
         multi_gpu_cfg: dict | None = None,
-        ):
+    ):
         self.device = device
         self.is_multi_gpu = multi_gpu_cfg is not None
         # Multi-GPU parameters
@@ -42,8 +45,9 @@ class DistillationWithExtractor():
         self.rnd = None  # TODO: remove when runner has a proper base class
 
         depth_backbone_class = eval(depth_encoder_cfg.pop("backbone_class_name"))
-        depth_backbone : DepthOnlyFCBackbone58x87 = depth_backbone_class( 
-            policy_cfg["scan_encoder_dims"][-1], depth_encoder_cfg["hidden_dims"],
+        depth_backbone: DepthOnlyFCBackbone58x87 = depth_backbone_class(
+            policy_cfg["scan_encoder_dims"][-1],
+            depth_encoder_cfg["hidden_dims"],
         )
         depth_encoder_class = eval(depth_encoder_cfg.pop("encoder_class_name"))
         depth_encoder: RecurrentDepthBackbone = depth_encoder_class(depth_backbone, depth_encoder_cfg).to(device)
@@ -53,7 +57,9 @@ class DistillationWithExtractor():
         self.depth_encoder = depth_encoder
         self.depth_encoder_cfg = depth_encoder_cfg
         self.depth_actor = depth_actor
-        self.depth_actor_optimizer = optim.Adam([*self.depth_actor.parameters(), *self.depth_encoder.parameters()], lr=depth_encoder_cfg["learning_rate"])
+        self.depth_actor_optimizer = optim.Adam(
+            [*self.depth_actor.parameters(), *self.depth_encoder.parameters()], lr=depth_encoder_cfg["learning_rate"]
+        )
 
     def update_depth_actor(self, actions_buffer):
         # student 는 더 이상 heading 을 예측하지 않으므로 loss 는 teacher action 을
@@ -89,6 +95,7 @@ class EMDistillation:
     (= teacher weight 로 초기화, Q6: 함께 fine-tune)를 통과한다.
     손실/옵티마이저/그래디언트 클립은 depth 파이프라인과 동일하게 유지한다.
     """
+
     policy: ActorCriticRMA
 
     def __init__(
@@ -101,7 +108,7 @@ class EMDistillation:
         device,
         max_grad_norm=1.0,
         multi_gpu_cfg: dict | None = None,
-        ):
+    ):
         self.device = device
         self.is_multi_gpu = multi_gpu_cfg is not None
         if multi_gpu_cfg is not None:

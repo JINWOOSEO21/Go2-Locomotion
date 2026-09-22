@@ -7,13 +7,15 @@ depth student(parkour_student_cfg.py)에서 파생하되:
 지형/보상/커리큘럼 등 나머지는 depth student 와 동일하게 유지해
 두 student 를 같은 조건에서 비교할 수 있게 한다.
 """
+
 import os
 
 from isaaclab.utils import configclass
 
 from parkour_isaaclab.terrains.extreme_parkour.config.parkour import apply_terrain_preset
-from .parkour_mdp_cfg import *
 from parkour_tasks.default_cfg import GO2_LIDAR_CFG, VIEWER
+
+from .parkour_mdp_cfg import *
 from .parkour_student_cfg import ParkourStudentSceneCfg, UnitreeGo2StudentParkourEnvCfg
 
 
@@ -27,7 +29,7 @@ class ParkourEMStudentSceneCfg(ParkourStudentSceneCfg):
 
 @configclass
 class UnitreeGo2EMStudentParkourEnvCfg(UnitreeGo2StudentParkourEnvCfg):
-    scene: ParkourEMStudentSceneCfg = ParkourEMStudentSceneCfg(num_envs=192, env_spacing=1.)
+    scene: ParkourEMStudentSceneCfg = ParkourEMStudentSceneCfg(num_envs=192, env_spacing=1.0)
     observations: EMStudentObservationsCfg = EMStudentObservationsCfg()
 
     def __post_init__(self):
@@ -43,17 +45,18 @@ class UnitreeGo2EMStudentParkourEnvCfg(UnitreeGo2StudentParkourEnvCfg):
 @configclass
 class UnitreeGo2EMStudentParkourEnvCfg_EVAL(UnitreeGo2EMStudentParkourEnvCfg):
     """depth student 의 EVAL 설정에서 카메라 관련 항목만 뺀 것."""
+
     viewer = VIEWER
     rewards: TeacherRewardsCfg = TeacherRewardsCfg()
 
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 256
-        self.episode_length_s = 20.
+        self.episode_length_s = 20.0
         self.commands.base_velocity.debug_vis = True
         self.scene.terrain.max_init_terrain_level = None
         self.parkours.base_parkour.debug_vis = True
-        self.commands.base_velocity.resampling_time_range = (60., 60.)
+        self.commands.base_velocity.resampling_time_range = (60.0, 60.0)
 
         if self.scene.terrain.terrain_generator is not None:
             self.scene.terrain.terrain_generator.num_rows = 5
@@ -62,10 +65,11 @@ class UnitreeGo2EMStudentParkourEnvCfg_EVAL(UnitreeGo2EMStudentParkourEnvCfg):
             self.scene.terrain.terrain_generator.difficulty_range = (0.0, 1.0)
         self.events.randomize_rigid_body_com = None
         self.events.randomize_rigid_body_mass = None
-        self.events.push_by_setting_velocity.interval_range_s = (6., 6.)
+        self.events.push_by_setting_velocity.interval_range_s = (6.0, 6.0)
 
         apply_terrain_preset(
-            self.scene.terrain.terrain_generator, "all_obstacles",
+            self.scene.terrain.terrain_generator,
+            "all_obstacles",
             active_overrides={"noise_range": (0.02, 0.02)},
         )
 
@@ -82,7 +86,7 @@ class UnitreeGo2EMStudentParkourEnvCfg_PLAY(UnitreeGo2EMStudentParkourEnvCfg_EVA
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 16
-        self.episode_length_s = 60.
+        self.episode_length_s = 60.0
 
         if self.scene.terrain.terrain_generator is not None:
             _d = os.environ.get("PARKOUR_DIFFICULTY")
@@ -96,7 +100,8 @@ class UnitreeGo2EMStudentParkourEnvCfg_PLAY(UnitreeGo2EMStudentParkourEnvCfg_EVA
         self.events.push_by_setting_velocity = None
         self.events.push_angular_velocity = None
         apply_terrain_preset(
-            self.scene.terrain.terrain_generator, "trapezoid_only",
+            self.scene.terrain.terrain_generator,
+            "trapezoid_only",
             one_col_per_terrain=True,
             active_overrides={"noise_range": (0.02, 0.02)},
         )
