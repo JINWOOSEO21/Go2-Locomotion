@@ -80,7 +80,6 @@ python scripts/rsl_rl/train.py \
   --task Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Train-v0 \
   --num_envs 4096 \
   --max_iterations 15000 \
-  --run_name scandots \
   --seed 42 \
   --headless
 ```
@@ -102,7 +101,6 @@ python scripts/rsl_rl/train.py \
   --num_envs 4096 \
   --max_iterations 30000 \
   --noise_ramp_ratio 0.7 \
-  --run_name lidar \
   --seed 42 \
   --headless
 ```
@@ -126,6 +124,13 @@ between an initial zero-noise interval and a final maximum-noise interval:
 Noise amplitudes are scaled from zero to the maxima defined in
 `LidarObservationsCfg`. Zero injected noise still includes LiDAR sampling and
 mapping errors. The action delay remains enabled throughout the schedule.
+
+Motion disturbances use a separate schedule: x/y velocity disturbances occur
+every 8 simulation seconds, and roll/pitch/yaw angular-velocity kicks every
+7 seconds. Phase 1 increases their scale through 0.2, 0.4, 0.6, 0.8 and 1.0
+in five equal iteration intervals. Phase 2 uses full strength (1.0) from the
+first iteration, including when resuming an earlier checkpoint. This does not
+change the LiDAR and odometry noise ramp above.
 
 ### Resuming training
 
@@ -199,11 +204,10 @@ the environment step. `--preset` selects a Play terrain preset.
 ## Logs and checkpoints
 
 Training writes to
-`logs/rsl_rl/<experiment_name>/<timestamp>_<run_name>/`.
-The default experiment is `unitree_go2_parkour`. `run_name` is a directory-name
-suffix: it defaults to `scandots` for Phase 1 and `lidar` for Phase 2. For example,
-`--run_name lidar_trial2` creates `<timestamp>_lidar_trial2`. It does not choose
-an algorithm or a checkpoint to load.
+`logs/rsl_rl/<experiment_name>/<timestamp>_scandots/` or
+`logs/rsl_rl/<experiment_name>/<timestamp>_lidar/`.
+The default experiment is `unitree_go2_parkour`. The suffix is selected
+automatically from the task's input mode; no separate run-name argument is needed.
 
 Existing logs and checkpoints are left in place. Use an explicit checkpoint path
 for playback or Phase 2 initialization, and `--load_run` to select a resume source.

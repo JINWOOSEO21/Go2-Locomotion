@@ -37,7 +37,8 @@ def _load_schedule_namespace():
 
 
 class _ScheduleRunner:
-    def __init__(self, namespace):
+    def __init__(self, namespace, input_mode="scandots_input"):
+        self.input_mode = input_mode
         self.env = types.SimpleNamespace(unwrapped=types.SimpleNamespace())
         self.current_learning_iteration = 16_999
         self._disturbance_schedule_total_iterations = None
@@ -96,6 +97,23 @@ class DisturbanceScheduleTest(unittest.TestCase):
         runner._begin_disturbance_schedule(5)
         self.assertEqual(runner.env.unwrapped.disturbance_scale, 0.2)
         self.assertEqual(runner._disturbance_schedule_completed_iterations, 0)
+
+    def test_lidar_uses_full_strength_throughout_training(self):
+        runner = _ScheduleRunner(self.namespace, input_mode="lidar_input")
+        runner._begin_disturbance_schedule(10)
+        self.assertEqual(runner.env.unwrapped.disturbance_scale, 1.0)
+        for _ in range(10):
+            runner._apply_disturbance_schedule()
+            self.assertEqual(runner.env.unwrapped.disturbance_scale, 1.0)
+            runner._advance_disturbance_schedule()
+
+    def test_lidar_resume_ignores_previous_lower_disturbance_stage(self):
+        runner = _ScheduleRunner(self.namespace, input_mode="lidar_input")
+        runner._restore_disturbance_schedule(
+            {"disturbance_schedule": {"total_iterations": 100, "completed_iterations": 10}}
+        )
+        runner._begin_disturbance_schedule(90)
+        self.assertEqual(runner.env.unwrapped.disturbance_scale, 1.0)
 
     def test_ppo_learning_loop_applies_and_advances_the_schedule(self):
         tree = ast.parse(RUNNER_PATH.read_text())

@@ -337,11 +337,12 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             self.save(os.path.join(self.log_dir, f"model_{self.current_learning_iteration}.pt"))
 
     def _begin_disturbance_schedule(self, num_learning_iterations: int):
-        """Start or resume the five-stage curriculum used by one learn() call.
+        """Track disturbance progress for one learn() call.
 
         ``num_learning_iterations`` is the number of additional iterations passed
         to this invocation. It deliberately does not use the absolute checkpoint
-        iteration, so a fresh phase begins at scale 0.2. Checkpoints
+        iteration, so fresh Scandots training begins at scale 0.2. LiDAR
+        training always uses scale 1.0, including when resuming. Checkpoints
         produced during this curriculum persist the original total and completed
         counts, allowing an interrupted run to continue at the same stage.
         """
@@ -353,6 +354,9 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         self._apply_disturbance_schedule()
 
     def _apply_disturbance_schedule(self):
+        if self.input_mode == "lidar_input":
+            self.env.unwrapped.disturbance_scale = 1.0
+            return
         total = self._disturbance_schedule_total_iterations
         if total is None:
             return

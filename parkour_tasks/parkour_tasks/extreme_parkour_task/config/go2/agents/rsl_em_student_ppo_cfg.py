@@ -10,7 +10,6 @@ class UnitreeGo2ParkourLidarPPORunnerCfg(UnitreeGo2ParkourTeacherPPORunnerCfg):
     input_mode = "lidar_input"
     max_iterations = 30000
     noise_ramp_ratio = 0.7
-    run_name = "lidar"
     load_run = ".*_lidar"
 
 

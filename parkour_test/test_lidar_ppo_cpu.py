@@ -464,9 +464,36 @@ class TrainingDefaultsContractTest(unittest.TestCase):
         lidar_source = LIDAR_AGENT_CFG_PATH.read_text(encoding="utf-8")
         self.assertIn("num_steps_per_env = 24", scandots_source)
         self.assertNotIn("num_steps_per_env", lidar_source)
-        self.assertIn('run_name = "scandots"', scandots_source)
-        self.assertIn('run_name = "lidar"', lidar_source)
+        self.assertNotIn("run_name", scandots_source + lidar_source)
         self.assertNotIn("run_subdir", scandots_source + lidar_source)
+
+    def test_log_suffix_follows_input_mode_without_run_name(self):
+        tree = ast.parse(TRAIN_PATH.read_text(encoding="utf-8"))
+        main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main")
+        suffix_statements = [
+            node for node in main.body
+            if (isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "input_suffix" for target in node.targets
+            )) or (isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id == "log_dir")
+        ]
+        code = compile(ast.Module(body=suffix_statements, type_ignores=[]), str(TRAIN_PATH), "exec")
+        for mode, suffix in (("scandots_input", "scandots"), ("lidar_input", "lidar")):
+            with self.subTest(mode=mode):
+                scope = {"agent_cfg": types.SimpleNamespace(input_mode=mode, run_name="ignored"), "log_dir": "timestamp"}
+                exec(code, scope)
+                self.assertEqual(scope["log_dir"], f"timestamp_{suffix}")
+
+    def test_shared_cli_has_no_run_name_option(self):
+        import argparse
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("parkour_cli_args", TRAIN_PATH.with_name("cli_args.py"))
+        cli_args = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cli_args)
+
+        parser = argparse.ArgumentParser()
+        cli_args.add_rsl_rl_args(parser)
+        self.assertNotIn("--run_name", parser._option_string_actions)
 
     def test_train_rejects_removed_video_option(self):
         source = TRAIN_PATH.read_text(encoding="utf-8")

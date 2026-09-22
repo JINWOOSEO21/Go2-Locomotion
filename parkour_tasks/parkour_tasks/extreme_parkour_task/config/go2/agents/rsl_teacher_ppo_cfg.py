@@ -17,7 +17,6 @@ class UnitreeGo2ParkourTeacherPPORunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
     max_iterations = 50000
     save_interval = 100
     experiment_name = "unitree_go2_parkour"
-    run_name = "scandots"
     load_run = ".*_scandots"
     empirical_normalization = False
     policy = ParkourRslRlPpoActorCriticCfg(
