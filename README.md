@@ -60,10 +60,14 @@ This project targets the following versions:
 | Isaac Lab | v2.3.x |
 | PyTorch | 2.7.0 + CUDA 12.8 (`torchvision` 0.22.0) |
 | RSL-RL | `rsl-rl-lib==2.3.3` |
+| TensorDict | `tensordict==0.8.3` |
 
 Isaac Lab v2.3 installs `rsl-rl-lib==3.1.2` by default. This project's runner and
 environment wrapper use the RSL-RL 2.3 interface (`get_observations()` returns
 `(obs, extras)` rather than a `TensorDict`), so reinstall 2.3.3 after Isaac Lab.
+`isaaclab_rl.rsl_rl` still imports `tensordict` at import time, but RSL-RL 2.3.3
+does not depend on it, so install it explicitly. `tensordict` 0.8.x matches
+PyTorch 2.7.
 Installing the Isaac Sim pip package requires GLIBC 2.35+ (e.g. Ubuntu 22.04).
 
 ```bash
@@ -78,6 +82,7 @@ git clone -b v2.3.2 https://github.com/isaac-sim/IsaacLab.git
 cd IsaacLab
 ./isaaclab.sh --install
 pip install rsl-rl-lib==2.3.3
+pip install tensordict==0.8.3
 cd ..
 ```
 
