@@ -50,6 +50,45 @@ when they coincide with the time limit.
 
 ## Installation
 
+### Environment setup
+
+This project targets the following versions:
+
+| Component | Version |
+| --- | --- |
+| Isaac Sim | 5.1.0 (pip package, Python 3.11) |
+| Isaac Lab | v2.3.x |
+| PyTorch | 2.7.0 + CUDA 12.8 (`torchvision` 0.22.0) |
+| RSL-RL | `rsl-rl-lib==2.3.3` |
+
+Isaac Lab v2.3 installs `rsl-rl-lib==3.1.2` by default. This project's runner and
+environment wrapper use the RSL-RL 2.3 interface (`get_observations()` returns
+`(obs, extras)` rather than a `TensorDict`), so reinstall 2.3.3 after Isaac Lab.
+Installing the Isaac Sim pip package requires GLIBC 2.35+ (e.g. Ubuntu 22.04).
+
+```bash
+conda create -n env_isaaclab python=3.11 -y
+conda activate env_isaaclab
+pip install --upgrade pip
+
+pip install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu128
+pip install "isaacsim[all,extscache]==5.1.0" --extra-index-url https://pypi.nvidia.com
+
+git clone -b v2.3.2 https://github.com/isaac-sim/IsaacLab.git
+cd IsaacLab
+./isaaclab.sh --install
+pip install rsl-rl-lib==2.3.3
+cd ..
+```
+
+With recent pip versions, an editable install can fail with
+`ModuleNotFoundError: No module named 'toml'`: the `setup.py` files import `toml`,
+but pip builds them in an isolated environment that does not contain it. Install
+`toml` in the active environment and retry the failing package with
+`pip install --no-build-isolation -e <path>`.
+
+### Project
+
 Use a Python environment configured for IsaacLab:
 
 ```bash
