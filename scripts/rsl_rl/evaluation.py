@@ -62,13 +62,13 @@ from isaaclab.utils.assets import retrieve_file_path
 from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 from isaaclab_tasks.utils import parse_env_cfg
 
-from parkour_tasks.default_cfg import RECORD_CAMERA_CFG
+from locomotion_tasks.default_cfg import RECORD_CAMERA_CFG
 from scripts.rsl_rl.multicam_recorder import PerEnvVideoRecorder
 
-from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
+from locomotion_tasks.locomotion_task.config.go2.agents.locomotion_rl_cfg import LocomotionRslRlOnPolicyRunnerCfg
 from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
 from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
-from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
+from scripts.rsl_rl.vecenv_wrapper import LocomotionRslRlVecEnvWrapper
 
 
 def main():
@@ -81,7 +81,7 @@ def main():
     env_cfg = parse_env_cfg(
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
-    agent_cfg: ParkourRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
+    agent_cfg: LocomotionRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
     if args_cli.multicam:
         env_cfg.scene.record_camera = copy.deepcopy(RECORD_CAMERA_CFG)
 
@@ -109,7 +109,7 @@ def main():
         env = multi_agent_to_single_agent(env)
 
     # wrap around environment for rsl-rl
-    env = ParkourRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    env = LocomotionRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
@@ -140,7 +140,7 @@ def main():
     cur_time_from_start = torch.zeros(env.num_envs, dtype=torch.float, device=env.device)
 
     reward_feet_edge = env.unwrapped.reward_manager.get_term_cfg("reward_feet_edge").func
-    base_parkour = env.unwrapped.parkour_manager.get_term("base_parkour")
+    base_goal = env.unwrapped.goal_manager.get_term("base_goal")
     recorder = None
     try:
         if args_cli.multicam:
@@ -154,7 +154,7 @@ def main():
                 actions = policy(obs, hist_encoding=True)
             if recorder is not None and timestep < args_cli.video_length:
                 recorder.track_camera()
-            cur_goal_idx = base_parkour.cur_goal_idx.clone()
+            cur_goal_idx = base_goal.cur_goal_idx.clone()
             obs, rews, dones, extras = env.step(actions)
             if recorder is not None and timestep < args_cli.video_length:
                 if recorder.capture():

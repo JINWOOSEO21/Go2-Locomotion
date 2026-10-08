@@ -16,7 +16,7 @@ OBJ 는 시각 확인·검증용으로만 남긴다.
 --------------------------------------
 파쿠르 지형은 높이맵(height_field_raw)에서 출발하지만, **최종 삼각망은 그 높이맵의
 조밀 격자가 아니다.** 실측으로 확인한 것:
-  - `parkour_field_to_mesh` 가 `convert_height_field_to_mesh(..., slope_threshold)` 를
+  - `height_field_to_mesh_with_edges` 가 `convert_height_field_to_mesh(..., slope_threshold)` 를
     쓰는데, 이게 단차 옆면을 수직으로 만들려고 꼭짓점을 **반칸(0.05m)** 위치로 옮긴다.
     그래서 꼭짓점의 57% 만 0.1 격자에 있고 43% 는 반칸에 있다.
   - `cfg.use_simplified` 가 켜져 있으면 quadric decimation 으로 면을 35% 줄인다.
@@ -42,7 +42,7 @@ TerrainGeneratorCfg.seed 기본값이 None 이라 지형 난수는 **전역 nump
 실행 (Isaac Sim 필요)
 ---------------------
     python deploy/tools/export_terrain.py --headless --num_envs 1 --seed 1 \
-        --task Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0 \
+        --task Isaac-Locomotion-Lidar-Unitree-Go2-Play-v0 \
         --out-dir logs/.../exported
 """
 
@@ -59,7 +59,7 @@ sys.path.insert(0, _REPO)
 import cli_args  # noqa: E402
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument("--task", default="Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0")
+parser.add_argument("--task", default="Isaac-Locomotion-Lidar-Unitree-Go2-Play-v0")
 parser.add_argument("--num_envs", type=int, default=1)
 parser.add_argument("--seed", type=int, default=1)
 parser.add_argument("--out-dir", required=True)
@@ -84,7 +84,7 @@ import isaaclab_tasks  # noqa: F401, E402
 import numpy as np  # noqa: E402
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 
-import parkour_tasks  # noqa: F401, E402
+import locomotion_tasks  # noqa: F401, E402
 
 
 def bake_heightfield(mesh, res: float, xlo, xhi, ylo, yhi):

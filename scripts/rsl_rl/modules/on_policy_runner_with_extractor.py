@@ -629,9 +629,9 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         self.alg.counter = int(counter)
         print(f"Restored PPO update counter = {self.alg.counter}.")
 
-    def _parkour_terms(self):
+    def _goal_terms(self):
         """씬에 붙어 있는 파쿠르 이벤트 term 들. 없으면 빈 리스트."""
-        manager = getattr(self.env.unwrapped, "parkour_manager", None)
+        manager = getattr(self.env.unwrapped, "goal_manager", None)
         if manager is None:
             return []
         try:
@@ -674,9 +674,9 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                 " probably a different --num_envs; the terrain curriculum restarts from scratch"
             )
             return
-        terms = self._parkour_terms()
+        terms = self._goal_terms()
         if not terms:
-            warnings.warn("no parkour term found; not restoring terrain levels")
+            warnings.warn("no goal term found; not restoring terrain levels")
             return
 
         for term in terms:

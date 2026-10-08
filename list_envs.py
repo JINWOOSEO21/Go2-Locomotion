@@ -27,7 +27,7 @@ simulation_app = app_launcher.app
 import gymnasium as gym
 from prettytable import PrettyTable
 
-import parkour_tasks  # noqa: F401
+import locomotion_tasks  # noqa: F401
 
 
 def main():

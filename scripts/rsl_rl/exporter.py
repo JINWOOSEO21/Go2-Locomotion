@@ -5,7 +5,7 @@ from isaaclab_rl.rsl_rl.exporter import _OnnxPolicyExporter, _TorchPolicyExporte
 
 
 def export_teacher_policy_as_jit(policy: object, normalizer: object | None, path: str, filename="policy.pt"):
-    policy_exporter = _ParkourTeacherTorchPolicyExporter(policy, normalizer)
+    policy_exporter = _LocomotionTeacherTorchPolicyExporter(policy, normalizer)
     policy_exporter.export(path, filename)
 
 
@@ -14,11 +14,11 @@ def export_teacher_policy_as_onnx(
 ):
     if not os.path.exists(path):
         os.makedirs(path, exist_ok=True)
-    policy_exporter = _ParkourTeacherOnnxPolicyExporter(policy, normalizer, verbose)
+    policy_exporter = _LocomotionTeacherOnnxPolicyExporter(policy, normalizer, verbose)
     policy_exporter.export(path, filename)
 
 
-class _ParkourTeacherTorchPolicyExporter(_TorchPolicyExporter):
+class _LocomotionTeacherTorchPolicyExporter(_TorchPolicyExporter):
     def __init__(self, policy, normalizer=None):
         super().__init__(policy, normalizer)
 
@@ -34,7 +34,7 @@ class _ParkourTeacherTorchPolicyExporter(_TorchPolicyExporter):
         return self.actor(self.normalizer(x), hist_encoding=True)
 
 
-class _ParkourTeacherOnnxPolicyExporter(_OnnxPolicyExporter):
+class _LocomotionTeacherOnnxPolicyExporter(_OnnxPolicyExporter):
     def __init__(self, policy, normalizer=None, verbose=False):
         super().__init__(policy, normalizer, verbose)
 

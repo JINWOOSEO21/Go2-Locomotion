@@ -1,8 +1,8 @@
 [tool.ruff]
-# Match parkour_tasks/setup.py's supported Python floor.
+# Match locomotion_tasks/setup.py's supported Python floor.
 target-version = "py310"
 line-length = 120
-src = [".", "parkour_tasks"]
+src = [".", "locomotion_tasks"]
 # Protect artifacts and the independently maintained submodule, including when
 # their files are explicitly passed to Ruff by an editor or command line.
 extend-exclude = [
@@ -25,13 +25,13 @@ select = ["E4", "E7", "E9", "F", "I"]
 unfixable = ["F401"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["parkour_isaaclab", "parkour_tasks", "scripts"]
+known-first-party = ["locomotion_isaaclab", "locomotion_tasks", "scripts"]
 
 [tool.ruff.lint.per-file-ignores]
 # Isaac Sim must launch before simulator-dependent modules are imported.
 "scripts/rsl_rl/{train,play,evaluation,eval_fixed_difficulty,demo}.py" = ["E402"]
 "list_envs.py" = ["E402"]
-"parkour_test/test_terrain_generator.py" = ["E402"]
+"locomotion_test/test_terrain_generator.py" = ["E402"]
 "deploy/tools/{dump_em_geometry,dump_isaaclab_joint_order,export_terrain}.py" = ["E402"]
 
 # Existing public re-export modules. Keep wildcard diagnostics enabled in
@@ -40,16 +40,16 @@ known-first-party = ["parkour_isaaclab", "parkour_tasks", "scripts"]
 "scripts/rsl_rl/__init__.py" = ["F401", "F403"]
 "scripts/rsl_rl/modules/__init__.py" = ["F401", "F403"]
 "scripts/rsl_rl/modules/feature_extractors/__init__.py" = ["F401", "F403"]
-"parkour_isaaclab/{actuators,envs,terrains}/__init__.py" = ["F401", "F403"]
-"parkour_isaaclab/envs/mdp/__init__.py" = ["F401", "F403"]
-"parkour_isaaclab/envs/mdp/parkour_actions/__init__.py" = ["F401", "F403"]
-"parkour_isaaclab/terrains/extreme_parkour/config/__init__.py" = ["F401", "F403"]
-"parkour_isaaclab/{managers,sensors}/__init__.py" = ["F401"]
-"parkour_isaaclab/terrains/extreme_parkour/__init__.py" = ["F401"]
-"parkour_isaaclab/envs/mdp/{parkour_commands,parkours}/__init__.py" = ["F401"]
-"parkour_test/utils/__init__.py" = ["F401"]
+"locomotion_isaaclab/{actuators,envs,terrains}/__init__.py" = ["F401", "F403"]
+"locomotion_isaaclab/envs/mdp/__init__.py" = ["F401", "F403"]
+"locomotion_isaaclab/envs/mdp/locomotion_actions/__init__.py" = ["F401", "F403"]
+"locomotion_isaaclab/terrains/locomotion_terrains/config/__init__.py" = ["F401", "F403"]
+"locomotion_isaaclab/{managers,sensors}/__init__.py" = ["F401"]
+"locomotion_isaaclab/terrains/locomotion_terrains/__init__.py" = ["F401"]
+"locomotion_isaaclab/envs/mdp/{locomotion_commands,goals}/__init__.py" = ["F401"]
+"locomotion_test/utils/__init__.py" = ["F401"]
 # Importing go2 registers the tasks.
-"parkour_tasks/parkour_tasks/extreme_parkour_task/__init__.py" = ["F401"]
+"locomotion_tasks/locomotion_tasks/locomotion_task/__init__.py" = ["F401"]
 
 [tool.ruff.format]
 quote-style = "double"

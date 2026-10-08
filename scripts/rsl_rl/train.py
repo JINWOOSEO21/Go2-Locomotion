@@ -97,12 +97,12 @@ from isaaclab.utils.io import dump_yaml
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 # import isaaclab_tasks  # noqa: F401
-import parkour_tasks  # noqa: F401
-from parkour_isaaclab.envs import ParkourManagerBasedRLEnv
-from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
+import locomotion_tasks  # noqa: F401
+from locomotion_isaaclab.envs import LocomotionManagerBasedRLEnv
+from locomotion_tasks.locomotion_task.config.go2.agents.locomotion_rl_cfg import LocomotionRslRlOnPolicyRunnerCfg
 from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
 from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
-from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
+from scripts.rsl_rl.vecenv_wrapper import LocomotionRslRlVecEnvWrapper
 
 # PLACEHOLDER: Extension template (do not remove this comment)
 
@@ -114,8 +114,8 @@ torch.backends.cudnn.benchmark = False
 
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
 def main(
-    env_cfg: ParkourManagerBasedRLEnv | ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg,
-    agent_cfg: ParkourRslRlOnPolicyRunnerCfg,
+    env_cfg: LocomotionManagerBasedRLEnv | ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg,
+    agent_cfg: LocomotionRslRlOnPolicyRunnerCfg,
 ):
     """Train with RSL-RL agent."""
 
@@ -186,7 +186,7 @@ def main(
         )
 
     # wrap around environment for rsl-rl
-    env = ParkourRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    env = LocomotionRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
     # # create runner from rsl-rl
     runner = OnPolicyRunnerWithExtractor(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     # # write git state to logs

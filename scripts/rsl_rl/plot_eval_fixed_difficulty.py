@@ -55,9 +55,9 @@ PARAM_UNIT = {
     "stone_len": " m",
 }
 TERRAIN_LABEL = {
-    "parkour_trapezoid_ramp": "경사로",
-    "parkour_trapezoid_stairs": "계단",
-    "parkour_flat": "평지",
+    "trapezoid_ramp": "경사로",
+    "trapezoid_stairs": "계단",
+    "flat": "평지",
 }
 
 REASON_ORDER = ["goal", "timeout", "fall_roll", "fall_pitch", "height"]
@@ -86,7 +86,7 @@ def terrain_param_line(meta: dict) -> str:
     params = meta.get("terrain_params") or {}
     parts = []
     for terrain, fields in params.items():
-        name = TERRAIN_LABEL.get(terrain, terrain.replace("parkour_", ""))
+        name = TERRAIN_LABEL.get(terrain, terrain)
         for field, value in fields.items():
             label = PARAM_LABEL.get(field, field)
             unit = PARAM_UNIT.get(field, "")

@@ -2,14 +2,14 @@ import gymnasium as gym
 import torch
 from rsl_rl.env import VecEnv
 
-from parkour_isaaclab.envs import ParkourManagerBasedRLEnv
+from locomotion_isaaclab.envs import LocomotionManagerBasedRLEnv
 
 
-class ParkourRslRlVecEnvWrapper(VecEnv):
-    def __init__(self, env: ParkourManagerBasedRLEnv, clip_actions: float | None = None):
-        if not isinstance(env.unwrapped, ParkourManagerBasedRLEnv):
+class LocomotionRslRlVecEnvWrapper(VecEnv):
+    def __init__(self, env: LocomotionManagerBasedRLEnv, clip_actions: float | None = None):
+        if not isinstance(env.unwrapped, LocomotionManagerBasedRLEnv):
             raise ValueError(
-                f"The environment must be inherited from ParkourManagerBasedRLEnv. Environment type: {type(env)}"
+                f"The environment must be inherited from LocomotionManagerBasedRLEnv. Environment type: {type(env)}"
             )
         # initialize the wrapper
         self.env = env
@@ -87,7 +87,7 @@ class ParkourRslRlVecEnvWrapper(VecEnv):
         return cls.__name__
 
     @property
-    def unwrapped(self) -> ParkourManagerBasedRLEnv:
+    def unwrapped(self) -> LocomotionManagerBasedRLEnv:
         """Returns the base environment of the wrapper.
 
         This will be the bare :class:`gymnasium.Env` environment, underneath all layers of wrappers.

@@ -17,7 +17,7 @@ import cli_args  # isort: skip
 from isaaclab.app import AppLauncher
 
 # add argparse arguments
-parser = argparse.ArgumentParser(description="Run an interactive parkour policy demo.", allow_abbrev=False)
+parser = argparse.ArgumentParser(description="Run an interactive locomotion policy demo.", allow_abbrev=False)
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
@@ -98,7 +98,7 @@ parser.add_argument(
         "gap",
         "hurdle",
         "step",
-        "parkour",
+        "obstacle_course",
         "flat",
         "demo",
         "pyramid",
@@ -108,7 +108,7 @@ parser.add_argument(
     ],
     help=(
         "Spawn every robot on this one sub-terrain instead of the default mix. "
-        "'flat' is the obstacle-free course (parkour_flat), which also flips the terrain-type "
+        "'flat' is the obstacle-free course (flat), which also flips the terrain-type "
         "flags in the observation (index 11/12) by itself."
     ),
 )
@@ -146,46 +146,46 @@ from omni.kit.viewport.utility import get_viewport_from_window_name
 from omni.kit.viewport.utility.camera_state import ViewportCameraState
 from pxr import Gf, Sdf
 
-from parkour_isaaclab.envs import ParkourManagerBasedRLEnv
-from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
-from parkour_tasks.default_cfg import RECORD_CAMERA_CFG
-from parkour_tasks.extreme_parkour_task.config.go2.parkour_em_student_cfg import UnitreeGo2LidarParkourEnvCfg_PLAY
-from parkour_tasks.extreme_parkour_task.config.go2.parkour_teacher_cfg import UnitreeGo2TeacherParkourEnvCfg_PLAY
+from locomotion_isaaclab.envs import LocomotionManagerBasedRLEnv
+from locomotion_tasks.locomotion_task.config.go2.agents.locomotion_rl_cfg import LocomotionRslRlOnPolicyRunnerCfg
+from locomotion_tasks.default_cfg import RECORD_CAMERA_CFG
+from locomotion_tasks.locomotion_task.config.go2.locomotion_em_student_cfg import UnitreeGo2LidarLocomotionEnvCfg_PLAY
+from locomotion_tasks.locomotion_task.config.go2.locomotion_teacher_cfg import UnitreeGo2TeacherLocomotionEnvCfg_PLAY
 from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
 from scripts.rsl_rl.keyboard_teleop import KeyboardTeleop, KeyboardTeleopState
 from scripts.rsl_rl.mjpeg_server import MjpegStreamer
 from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
 from scripts.rsl_rl.multicam_recorder import PerEnvVideoRecorder
-from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
+from scripts.rsl_rl.vecenv_wrapper import LocomotionRslRlVecEnvWrapper
 
 # --terrain 값 -> terrain_generator.sub_terrains 의 키.
 _TERRAIN_KEYS = {
-    "gap": "parkour_gap",
-    "hurdle": "parkour_hurdle",
-    "step": "parkour_step",
-    "parkour": "parkour",
-    "flat": "parkour_flat",
-    "demo": "parkour_demo",
-    "pyramid": "parkour_pyramid_stairs",
-    "pyramid_up": "parkour_pyramid_stairs_up",
-    "discrete": "parkour_discrete_obstacles",
-    "grid": "parkour_random_grid",
+    "gap": "gap",
+    "hurdle": "hurdle",
+    "step": "step",
+    "obstacle_course": "obstacle_course",
+    "flat": "flat",
+    "demo": "demo",
+    "pyramid": "pyramid_stairs",
+    "pyramid_up": "pyramid_stairs_up",
+    "discrete": "discrete_obstacles",
+    "grid": "random_grid",
 }
 
 
 def force_single_terrain(env_cfg, choice: str):
     """모든 컬럼이 한 종류의 sub-terrain 만 쓰도록 비율을 바꾼다.
 
-    지형 종류는 컬럼별로 정해진다(parkour_terrain_generator.py):
+    지형 종류는 컬럼별로 정해진다(locomotion_terrain_generator.py):
         sub_index = min(where(col/num_cols + 0.001 < cumsum(정규화된 proportion)))
     고른 것만 proportion 을 남기면 그 앞의 cumsum 이 전부 0 이라 어느 컬럼이든 같은
     종류가 걸린다. 즉 --num_envs 를 몇으로 주든 전부 이 지형에 스폰된다.
 
-    'flat'(parkour_flat)은 hurdle 지형에 apply_flat=True 를 준 것이라 장애물만 안 파이고
+    'flat'(flat)은 hurdle 지형에 apply_flat=True 를 준 것이라 장애물만 안 파이고
     goal point 8 개와 코스 길이는 그대로다. 그래서 방향 조종은 똑같이 동작한다.
 
     관측의 지형 타입 플래그(index 11 = non-flat, 12 = flat)는 observations.py 가
-    parkour_event.env_per_terrain_name 을 'parkour_flat' 과 문자열 비교해 매 스텝 만든다.
+    goal_event.env_per_terrain_name 을 'flat' 과 문자열 비교해 매 스텝 만든다.
     실제로 그 지형에 스폰시키면 플래그도 저절로 뒤집히므로 obs 를 손댈 필요가 없다.
     """
     gen = getattr(env_cfg.scene.terrain, "terrain_generator", None)
@@ -198,15 +198,15 @@ def force_single_terrain(env_cfg, choice: str):
         return
     for name, sub_terrain in gen.sub_terrains.items():
         sub_terrain.proportion = 1.0 if name == key else 0.0
-    # PLAY 설정의 루프는 parkour_flat 을 건너뛰어서 노이즈 폭이 기본값(0.02~0.06)으로
+    # PLAY 설정의 루프는 flat 을 건너뛰어서 노이즈 폭이 기본값(0.02~0.06)으로
     # 남는다. 다른 지형과 같은 조건으로 맞춰 준다.
     gen.sub_terrains[key].noise_range = (0.02, 0.02)
     print(f"[demo] 모든 env 를 '{key}' 지형에 스폰한다.")
 
 
-class ParkourDemoGO2:
+class LocomotionDemoGO2:
     def __init__(self):
-        agent_cfg: ParkourRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
+        agent_cfg: LocomotionRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
         log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
         log_root_path = os.path.abspath(log_root_path)
 
@@ -224,9 +224,9 @@ class ParkourDemoGO2:
         self.log_dir = os.path.dirname(checkpoint)
         # create envionrment
         env_cfg = (
-            UnitreeGo2LidarParkourEnvCfg_PLAY()
+            UnitreeGo2LidarLocomotionEnvCfg_PLAY()
             if agent_cfg.input_mode == "lidar_input"
-            else UnitreeGo2TeacherParkourEnvCfg_PLAY()
+            else UnitreeGo2TeacherLocomotionEnvCfg_PLAY()
         )
         env_cfg.scene.num_envs = args_cli.num_envs
         env_cfg.episode_length_s = 1000000
@@ -252,7 +252,7 @@ class ParkourDemoGO2:
             env_cfg.scene.record_camera.height = int(h)
         self.env_cfg = env_cfg
         # wrap around environment for rsl-rl
-        self.env = ParkourRslRlVecEnvWrapper(ParkourManagerBasedRLEnv(cfg=env_cfg))
+        self.env = LocomotionRslRlVecEnvWrapper(LocomotionManagerBasedRLEnv(cfg=env_cfg))
         self.device = self.env.unwrapped.device
         # load previously trained model
         ppo_runner = OnPolicyRunnerWithExtractor(self.env, agent_cfg.to_dict(), log_dir=None, device=self.device)
@@ -641,7 +641,7 @@ class ParkourDemoGO2:
 
 def main():
     """Main function."""
-    demo_go2 = ParkourDemoGO2()
+    demo_go2 = LocomotionDemoGO2()
     actor_param = demo_go2.agent_cfg.policy.actor
     num_priv_explicit = actor_param.num_priv_explicit
     num_scan = actor_param.num_scan

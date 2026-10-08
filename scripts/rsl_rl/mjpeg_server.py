@@ -23,10 +23,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import cv2
 import numpy as np
 
-_BOUNDARY = "parkourframe"
+_BOUNDARY = "locomotionframe"
 
 _PAGE = """<!doctype html>
-<html><head><meta charset="utf-8"><title>Parkour GO2</title>
+<html><head><meta charset="utf-8"><title>Locomotion GO2</title>
 <style>
   html,body{{margin:0;height:100%;background:#111;color:#ddd;
             font-family:ui-monospace,monospace;display:flex;

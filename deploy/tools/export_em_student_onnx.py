@@ -20,7 +20,7 @@ actor_backbone(concat 114)->12.
 
 구조를 cfg 가 아니라 체크포인트에서 읽는 이유
 ---------------------------------------------
-agent cfg(`parkour_rl_cfg.py`)는 isaaclab 을 import 한다. 그러면 export 에
+agent cfg(`locomotion_rl_cfg.py`)는 isaaclab 을 import 한다. 그러면 export 에
 Isaac Sim 이 필요해진다. 가중치 shape 만으로 거의 모든 치수가 복원되므로
 체크포인트에서 읽고, 복원한 값들끼리 아귀가 맞는지 assert 로 검증한다.
 
@@ -31,7 +31,7 @@ Isaac Sim 이 필요해진다. 가중치 shape 만으로 거의 모든 치수가
 실행 (Isaac Sim 불필요)
 ----------------------
     python deploy/tools/export_em_student_onnx.py \
-        --checkpoint logs/rsl_rl/unitree_go2_parkour/<timestamp>_lidar/model_29999.pt
+        --checkpoint logs/rsl_rl/unitree_go2_locomotion/<timestamp>_lidar/model_29999.pt
 """
 
 from __future__ import annotations

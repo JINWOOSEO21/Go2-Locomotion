@@ -43,27 +43,27 @@ import torch  # noqa: E402
 from isaaclab.assets import Articulation  # noqa: E402
 from isaaclab.utils.math import matrix_from_quat  # noqa: E402
 
-from parkour_isaaclab.sensors import GO2_SELF_FILTER_CAPSULES  # noqa: E402
-from parkour_tasks.default_cfg import ParkourDefaultSceneCfg  # noqa: E402
+from locomotion_isaaclab.sensors import GO2_SELF_FILTER_CAPSULES  # noqa: E402
+from locomotion_tasks.default_cfg import LocomotionDefaultSceneCfg  # noqa: E402
 
 ok = False
 try:
     # --- 1. scandots 격자 -----------------------------------------------------
     # teacher cfg 를 그대로 읽는다 (값을 재입력하지 않는다).
-    from parkour_tasks.extreme_parkour_task.config.go2.parkour_teacher_cfg import (
-        ParkourTeacherSceneCfg,
+    from locomotion_tasks.locomotion_task.config.go2.locomotion_teacher_cfg import (
+        LocomotionTeacherSceneCfg,
     )
 
     # configclass 는 dataclass 라 클래스 속성이 아니라 인스턴스에서 읽어야 한다.
     # (씬 cfg 인스턴스화는 객체 조립일 뿐, 지형 생성은 일어나지 않는다.)
-    scanner_cfg = ParkourTeacherSceneCfg(num_envs=1, env_spacing=1.0).height_scanner
+    scanner_cfg = LocomotionTeacherSceneCfg(num_envs=1, env_spacing=1.0).height_scanner
     pat = scanner_cfg.pattern_cfg
     starts, _dirs = pat.func(pat, "cpu")
     starts = starts + torch.tensor(list(scanner_cfg.offset.pos))
     scan_offsets_xy = starts[:, :2].numpy().astype(np.float64)
 
     # --- 2/3. 로봇 기하 --------------------------------------------------------
-    scene_cfg = ParkourDefaultSceneCfg(num_envs=1, env_spacing=1.0)
+    scene_cfg = LocomotionDefaultSceneCfg(num_envs=1, env_spacing=1.0)
     robot_cfg = scene_cfg.robot.replace(prim_path="/World/Robot")
 
     sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(dt=0.005, device="cuda:0"))

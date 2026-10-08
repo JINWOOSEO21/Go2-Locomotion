@@ -24,8 +24,8 @@ rollout 을 돌리고, 에피소드 단위로 reward 를 기록한다.
     개의 서로 다른 '같은 난이도' 지형이 생긴다.
 
 reward 기록 규약:
-    ParkourRewardManager 는 최종 reward 를 0 에서 클리핑한다
-    (parkour_reward_manager.py 의 torch.clip(min=0.)). 여기서 저장하는
+    LocomotionRewardManager 는 최종 reward 를 0 에서 클리핑한다
+    (locomotion_reward_manager.py 의 torch.clip(min=0.)). 여기서 저장하는
     rew_total_raw_per_s 는 그 클리핑 '이전' 의 가중합이다. 페널티가 온전히
     반영된 값이라 동작 품질 비교에는 이쪽이 맞다.
 
@@ -54,7 +54,7 @@ parser = argparse.ArgumentParser(description="Evaluate scandots-input checkpoint
 parser.add_argument(
     "--task",
     type=str,
-    default="Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Eval-v0",
+    default="Isaac-Locomotion-Scandots-Unitree-Go2-Eval-v0",
     help="Eval 용 task id.",
 )
 parser.add_argument(
@@ -118,12 +118,12 @@ from isaaclab.utils.math import euler_xyz_from_quat, wrap_to_pi
 from isaaclab_tasks.utils import parse_env_cfg
 from tqdm import tqdm
 
-from parkour_isaaclab.terrains.extreme_parkour.config.parkour import apply_terrain_preset
-from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import (
-    ParkourRslRlOnPolicyRunnerCfg,
+from locomotion_isaaclab.terrains.locomotion_terrains.config.locomotion import apply_terrain_preset
+from locomotion_tasks.locomotion_task.config.go2.agents.locomotion_rl_cfg import (
+    LocomotionRslRlOnPolicyRunnerCfg,
 )
 from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
-from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
+from scripts.rsl_rl.vecenv_wrapper import LocomotionRslRlVecEnvWrapper
 
 
 def select_checkpoints(checkpoint_dir: str, iterations: str | None, step: int) -> list[tuple[int, str]]:
@@ -185,7 +185,7 @@ class EpisodeRecorder:
     def __init__(self, env, weights: np.ndarray, num_goals: int):
         self.env_u = env.unwrapped
         self.rm = self.env_u.reward_manager
-        self.pe = self.env_u.parkour_manager.get_term("base_parkour")
+        self.pe = self.env_u.goal_manager.get_term("base_goal")
         self.robot = self.env_u.scene["robot"]
         self.terrain = self.env_u.scene.terrain
         self.num_goals = num_goals
@@ -311,7 +311,7 @@ def main():
     env_cfg = parse_env_cfg(
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
-    agent_cfg: ParkourRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
+    agent_cfg: LocomotionRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
     # -- 난이도 고정. difficulty_range 를 한 점으로 좁히면 모든 row 가 같은 난이도가 된다.
     generator = env_cfg.scene.terrain.terrain_generator
@@ -339,7 +339,7 @@ def main():
         print(f"[INFO]   {name}: {params}")
 
     env = gym.make(args_cli.task, cfg=env_cfg)
-    env = ParkourRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    env = LocomotionRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
     env_u = env.unwrapped
 
     runner = OnPolicyRunnerWithExtractor(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)

@@ -8,7 +8,7 @@
 #   env_sim2real:  python deploy/tools/build_joint_maps.py --isaaclab-json /tmp/il.json \
 #                      --mjcf <menagerie>/unitree_go2/go2.xml --out /tmp/maps.json
 #
-#   - isaaclab: ParkourDefaultSceneCfg 의 robot cfg 로 Articulation 하나만 헤드리스
+#   - isaaclab: LocomotionDefaultSceneCfg 의 robot cfg 로 Articulation 하나만 헤드리스
 #     스폰해 Articulation.data.joint_names 를 읽었다. 추측이 아니라 실측이다.
 #   - mjcf: mujoco_menagerie/unitree_go2/go2.xml 을 mujoco 로 로드해 힌지 관절과
 #     actuator 순서를 읽었다 (둘은 일치함을 assert 로 확인).
@@ -18,9 +18,9 @@
 meta:
   measured_at: "2026-09-02"
   robot: unitree_go2
-  policy_checkpoint: logs/rsl_rl/unitree_go2_parkour/student_pretrained/trained_v1.3~30K/model_29998.pt
+  policy_checkpoint: logs/rsl_rl/unitree_go2_locomotion/student_pretrained/trained_v1.3~30K/model_29998.pt
   sources:
-    isaaclab_cfg: parkour_tasks/default_cfg.py  # ParkourDefaultSceneCfg
+    isaaclab_cfg: locomotion_tasks/default_cfg.py  # LocomotionDefaultSceneCfg
     mjcf_path: mujoco_menagerie/unitree_go2/go2.xml
     mjcf_repo: https://github.com/google-deepmind/mujoco_menagerie
     mjcf_commit: e4049d0          # 클론 시점 HEAD (submodule 로 고정하지는 않았다)
@@ -88,7 +88,7 @@ default_joint_pos:
   sdk:      [-0.1, 0.8, -1.5, 0.1, 0.8, -1.5, -0.1, 1.0, -1.5, 0.1, 1.0, -1.5]
 
 # ---------------------------------------------------------------------------
-# 액추에이터 (ParkourDCMotor). 전부 IsaacLab 순서.
+# 액추에이터 (LocomotionDCMotor). 전부 IsaacLab 순서.
 # 토크는 단순 PD 가 아니라 속도 의존 포화를 거친다:
 #   tau     = kp*(q_des - q) + kd*(0 - dq)
 #   tau_max = clip(sat*(1 - dq/dq_lim),  0, eff_lim)

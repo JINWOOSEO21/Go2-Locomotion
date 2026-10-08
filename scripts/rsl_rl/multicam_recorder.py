@@ -51,7 +51,7 @@ def resolve_terrain_names(env) -> list[str]:
     """env 별로 배정된 서브지형 이름을 돌려준다.
 
     TerrainImporter 가 env 를 (level=row, type=col) 로 배정하고
-    ParkourTerrainGenerator 가 terrain_names[row, col] 에 이름을 채워둔다.
+    LocomotionTerrainGenerator 가 terrain_names[row, col] 에 이름을 채워둔다.
     그 배열을 우선 쓰고, 접근이 안 되면 generator 와 동일한 규칙으로
     컬럼→서브지형 매핑을 직접 계산한다.
     """
@@ -66,7 +66,7 @@ def resolve_terrain_names(env) -> list[str]:
     except Exception as exc:  # noqa: BLE001
         print(f"[WARN] terrain_names 조회 실패, 설정에서 재계산한다: {exc!r}")
 
-    # 2순위: proportion 으로 컬럼 매핑을 재현 (ParkourTerrainGenerator 와 같은 식)
+    # 2순위: proportion 으로 컬럼 매핑을 재현 (LocomotionTerrainGenerator 와 같은 식)
     gen_cfg = env.unwrapped.scene.cfg.terrain.terrain_generator
     keys = list(gen_cfg.sub_terrains.keys())
     props = np.array([c.proportion for c in gen_cfg.sub_terrains.values()], dtype=float)

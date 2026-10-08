@@ -21,12 +21,12 @@ simulation_app = app_launcher.app
 import isaaclab.sim as sim_utils  # noqa: E402
 from isaaclab.assets import Articulation  # noqa: E402
 
-from parkour_tasks.default_cfg import ParkourDefaultSceneCfg  # noqa: E402
+from locomotion_tasks.default_cfg import LocomotionDefaultSceneCfg  # noqa: E402
 
 out = {}
 try:
     # 파쿠르 씬과 같은 robot cfg (actuator override 는 __post_init__ 에서 걸린다)
-    scene_cfg = ParkourDefaultSceneCfg(num_envs=1, env_spacing=1.0)
+    scene_cfg = LocomotionDefaultSceneCfg(num_envs=1, env_spacing=1.0)
     robot_cfg = scene_cfg.robot.replace(prim_path="/World/Robot")
 
     sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(dt=0.005, device="cuda:0"))

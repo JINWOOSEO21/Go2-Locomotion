@@ -1,9 +1,9 @@
-# Isaaclab_Parkour
+# Go2-Locomotion
 
-Train a Unitree Go2 parkour policy whose terrain perception uses LiDAR point clouds
-and odometry. Training starts with ground-truth (GT) scandots in simulation to
-initialize locomotion, then adapts the policy to LiDAR-based terrain estimates
-using reinforcement learning.
+Train a Unitree Go2 locomotion policy for slopes, stairs, and flat ground whose
+terrain perception uses LiDAR point clouds and odometry. Training starts with
+ground-truth (GT) scandots in simulation to initialize locomotion, then adapts
+the policy to LiDAR-based terrain estimates using reinforcement learning.
 
 This project builds on [Isaaclab_Parkour](https://github.com/CAI23sbP/Isaaclab_Parkour)
 and [Extreme-Parkour](https://extreme-parkour.github.io/).
@@ -97,10 +97,10 @@ but pip builds them in an isolated environment that does not contain it. Install
 Use a Python environment configured for IsaacLab:
 
 ```bash
-git clone --recurse-submodules https://github.com/JINWOOSEO21/Isaaclab_Parkour.git
-cd Isaaclab_Parkour
+git clone --recurse-submodules https://github.com/JINWOOSEO21/Go2-Locomotion.git
+cd Go2-Locomotion
 pip install -e .
-pip install -e ./parkour_tasks
+pip install -e ./locomotion_tasks
 ```
 
 For an existing checkout, initialize submodules with
@@ -112,13 +112,13 @@ Run the following commands from the repository root.
 
 | Use | Scandots pretraining | LiDAR policy |
 | --- | --- | --- |
-| Train | `Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Train-v0` | `Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Train-v0` |
-| Play | `Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Play-v0` | `Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0` |
-| Eval | `Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Eval-v0` | `Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Eval-v0` |
+| Train | `Isaac-Locomotion-Scandots-Unitree-Go2-Train-v0` | `Isaac-Locomotion-Lidar-Unitree-Go2-Train-v0` |
+| Play | `Isaac-Locomotion-Scandots-Unitree-Go2-Play-v0` | `Isaac-Locomotion-Lidar-Unitree-Go2-Play-v0` |
+| Eval | `Isaac-Locomotion-Scandots-Unitree-Go2-Eval-v0` | `Isaac-Locomotion-Lidar-Unitree-Go2-Eval-v0` |
 
 Play disables scheduled pushes. Eval uses the evaluation terrain distribution and
 disturbances. The task registration source is
-[config/go2/__init__.py](parkour_tasks/parkour_tasks/extreme_parkour_task/config/go2/__init__.py).
+[config/go2/__init__.py](locomotion_tasks/locomotion_tasks/locomotion_task/config/go2/__init__.py).
 
 ## Training
 
@@ -131,7 +131,7 @@ needed for the available hardware.
 
 ```bash
 python scripts/rsl_rl/train.py \
-  --task Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Train-v0 \
+  --task Isaac-Locomotion-Scandots-Unitree-Go2-Train-v0 \
   --num_envs 4096 \
   --max_iterations 15000 \
   --seed 42 \
@@ -139,7 +139,7 @@ python scripts/rsl_rl/train.py \
 ```
 
 The run is saved to
-`logs/rsl_rl/unitree_go2_parkour/<timestamp>_scandots/`.
+`logs/rsl_rl/unitree_go2_locomotion/<timestamp>_scandots/`.
 A completed 15,000-iteration run produces `model_14999.pt`.
 
 ### Phase 2: LiDAR and odometry
@@ -147,10 +147,10 @@ A completed 15,000-iteration run produces `model_14999.pt`.
 Replace `<timestamp>` with the Phase 1 run's timestamp:
 
 ```bash
-SCANDOTS_CHECKPOINT="logs/rsl_rl/unitree_go2_parkour/<timestamp>_scandots/model_14999.pt"
+SCANDOTS_CHECKPOINT="logs/rsl_rl/unitree_go2_locomotion/<timestamp>_scandots/model_14999.pt"
 
 python scripts/rsl_rl/train.py \
-  --task Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Train-v0 \
+  --task Isaac-Locomotion-Lidar-Unitree-Go2-Train-v0 \
   --init_checkpoint "$SCANDOTS_CHECKPOINT" \
   --num_envs 4096 \
   --max_iterations 30000 \
@@ -159,7 +159,7 @@ python scripts/rsl_rl/train.py \
   --headless
 ```
 
-The run is saved to `logs/rsl_rl/unitree_go2_parkour/<timestamp>_lidar/`.
+The run is saved to `logs/rsl_rl/unitree_go2_locomotion/<timestamp>_lidar/`.
 A completed 30,000-iteration run produces `model_29999.pt`.
 
 `--init_checkpoint` loads policy, estimator and available observation-normalizer
@@ -192,7 +192,7 @@ Select the matching Train task and the existing run folder:
 
 ```bash
 python scripts/rsl_rl/train.py \
-  --task Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Train-v0 \
+  --task Isaac-Locomotion-Lidar-Unitree-Go2-Train-v0 \
   --resume \
   --load_run '<timestamp>_lidar' \
   --checkpoint model_10000.pt \
@@ -209,15 +209,15 @@ checkpoint. Resume writes a new run directory; it does not move existing files.
 Set the checkpoint paths for the runs to inspect:
 
 ```bash
-SCANDOTS_CHECKPOINT="logs/rsl_rl/unitree_go2_parkour/<timestamp>_scandots/model_14999.pt"
-LIDAR_CHECKPOINT="logs/rsl_rl/unitree_go2_parkour/<timestamp>_lidar/model_29999.pt"
+SCANDOTS_CHECKPOINT="logs/rsl_rl/unitree_go2_locomotion/<timestamp>_scandots/model_14999.pt"
+LIDAR_CHECKPOINT="logs/rsl_rl/unitree_go2_locomotion/<timestamp>_lidar/model_29999.pt"
 ```
 
 Inspect the pretrained policy:
 
 ```bash
 python scripts/rsl_rl/play.py \
-  --task Isaac-Extreme-Parkour-Scandots-Unitree-Go2-Play-v0 \
+  --task Isaac-Locomotion-Scandots-Unitree-Go2-Play-v0 \
   --checkpoint "$SCANDOTS_CHECKPOINT" --num_envs 3 --seed 42
 ```
 
@@ -225,11 +225,11 @@ Play and evaluate the LiDAR policy:
 
 ```bash
 python scripts/rsl_rl/play.py \
-  --task Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0 \
+  --task Isaac-Locomotion-Lidar-Unitree-Go2-Play-v0 \
   --checkpoint "$LIDAR_CHECKPOINT" --num_envs 3 --seed 42
 
 python scripts/rsl_rl/evaluation.py \
-  --task Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Eval-v0 \
+  --task Isaac-Locomotion-Lidar-Unitree-Go2-Eval-v0 \
   --checkpoint "$LIDAR_CHECKPOINT" --headless
 ```
 
@@ -244,7 +244,7 @@ Evaluation does not restore the training terrain curriculum.
 
 ```bash
 python scripts/rsl_rl/play.py \
-  --task Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0 \
+  --task Isaac-Locomotion-Lidar-Unitree-Go2-Play-v0 \
   --checkpoint "$LIDAR_CHECKPOINT" \
   --num_envs 3 --seed 42 --headless \
   --multicam --panels --video_length 1000
@@ -260,7 +260,7 @@ the environment step. `--preset` selects a Play terrain preset.
 Training writes to
 `logs/rsl_rl/<experiment_name>/<timestamp>_scandots/` or
 `logs/rsl_rl/<experiment_name>/<timestamp>_lidar/`.
-The default experiment is `unitree_go2_parkour`. The suffix is selected
+The default experiment is `unitree_go2_locomotion`. The suffix is selected
 automatically from the task's input mode; no separate run-name argument is needed.
 
 Existing logs and checkpoints are left in place. Use an explicit checkpoint path
@@ -271,7 +271,7 @@ for playback or Phase 2 initialization, and `--load_run` to select a resume sour
 Run targeted CPU checks without launching Isaac Sim:
 
 ```bash
-python -m unittest parkour_test.test_task_registry_cpu parkour_test.test_lidar_ppo_cpu parkour_test.test_lidar_noise_cpu parkour_test.test_play_recording_cpu -v
+python -m unittest locomotion_test.test_task_registry_cpu locomotion_test.test_lidar_ppo_cpu locomotion_test.test_lidar_noise_cpu locomotion_test.test_play_recording_cpu -v
 ```
 
 Some other tests launch Isaac Sim; avoid collecting them indiscriminately during

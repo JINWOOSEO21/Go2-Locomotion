@@ -17,7 +17,7 @@ In the GUI, Numpad 7/9 change the tracked environment.
 
 Example:
   python scripts/rsl_rl/play.py --headless --multicam --panels \
-      --task Isaac-Extreme-Parkour-Lidar-Unitree-Go2-Play-v0 \
+      --task Isaac-Locomotion-Lidar-Unitree-Go2-Play-v0 \
       --num_envs 2 --video_length 1000
 """
 
@@ -146,14 +146,14 @@ from isaaclab.utils.math import quat_from_euler_xyz, quat_mul
 from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 from isaaclab_tasks.utils import parse_env_cfg
 
-from parkour_isaaclab.terrains.extreme_parkour.config.parkour import apply_terrain_preset
-from parkour_tasks.default_cfg import RECORD_CAMERA_CFG
-from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
+from locomotion_isaaclab.terrains.locomotion_terrains.config.locomotion import apply_terrain_preset
+from locomotion_tasks.default_cfg import RECORD_CAMERA_CFG
+from locomotion_tasks.locomotion_task.config.go2.agents.locomotion_rl_cfg import LocomotionRslRlOnPolicyRunnerCfg
 from scripts.rsl_rl.checkpoint_utils import get_checkpoint_path_with_fallback
 from scripts.rsl_rl.exporter import export_teacher_policy_as_jit, export_teacher_policy_as_onnx
 from scripts.rsl_rl.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
 from scripts.rsl_rl.multicam_recorder import PerEnvVideoRecorder
-from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
+from scripts.rsl_rl.vecenv_wrapper import LocomotionRslRlVecEnvWrapper
 
 
 def apply_spawn_offset(env_cfg):
@@ -265,7 +265,7 @@ def main():
     apply_spawn_offset(env_cfg)
     apply_record_camera(env_cfg)
     apply_terrain_override(env_cfg)
-    agent_cfg: ParkourRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
+    agent_cfg: LocomotionRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
     # --seed 가 주어졌을 때만 env 에 심는다 (train.py:127 과 같은 경로). env 초기화가
     # torch/numpy 전역 시드를 잡아 지형 노이즈·리셋 노이즈·DR 이 재현된다.
@@ -302,7 +302,7 @@ def main():
         env = multi_agent_to_single_agent(env)
 
     # wrap around environment for rsl-rl
-    env = ParkourRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    env = LocomotionRslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
